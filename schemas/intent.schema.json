@@ -117,6 +117,27 @@
         },
         "storage": {
           "$ref": "#/$defs/Storage"
+        },
+        "restart": {
+          "type": "string",
+          "enum": ["no", "on-failure", "always", "unless-stopped"],
+          "default": "unless-stopped",
+          "description": "docker-compose restart policy; mapped to systemd Restart= for jar runtime"
+        },
+        "extra_env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Arbitrary environment variables to inject into the runtime"
+        },
+        "extra_args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Extra CLI args appended to ./bin/FullNode after -c <conf>"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Docker labels (or recorded in state for jar runtime)"
         }
       },
       "if": {
@@ -140,7 +161,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "memory": { "type": "string", "default": "16GB" }
+        "memory": { "type": "string", "default": "16GB" },
+        "cpu": { "type": "string", "description": "CPU limit, e.g. '2.0' or '500m'" }
       }
     },
     "Storage": {

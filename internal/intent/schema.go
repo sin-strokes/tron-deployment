@@ -37,6 +37,27 @@ type NodeSpec struct {
 	JVM            *JVMConfig  `yaml:"jvm,omitempty" json:"jvm,omitempty"`
 	Ports          PortMapping `yaml:"ports,omitempty" json:"ports,omitempty"`
 	Storage        Storage     `yaml:"storage,omitempty" json:"storage,omitempty"`
+
+	// Restart maps to docker-compose's "restart:" or systemd's "Restart=".
+	// Allowed values mirror docker-compose: no, on-failure, always,
+	// unless-stopped (default). The systemd renderer translates these to
+	// the closest equivalent (Restart=no | on-failure | always | always).
+	Restart string `yaml:"restart,omitempty" json:"restart,omitempty" validate:"omitempty,oneof=no on-failure always unless-stopped"`
+
+	// ExtraEnv injects arbitrary environment variables into the runtime.
+	// For Docker this becomes a flat list under "environment:". For jar
+	// runtime it becomes a systemd drop-in [Service] Environment= line.
+	// Witness key passthrough is still automatic (don't list it here).
+	ExtraEnv map[string]string `yaml:"extra_env,omitempty" json:"extra_env,omitempty"`
+
+	// ExtraArgs appends positional arguments to the FullNode command line
+	// after "-c <conf>" but before "--witness". Useful for image-specific
+	// flags like --log-config or experimental switches.
+	ExtraArgs []string `yaml:"extra_args,omitempty" json:"extra_args,omitempty"`
+
+	// Labels become docker labels (or are stored verbatim in state for jar
+	// nodes). Test harnesses use them to filter `docker ps -f label=...`.
+	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
 
 // Features contains feature flags for a node.
@@ -54,6 +75,10 @@ type Features struct {
 // Resources specifies resource constraints.
 type Resources struct {
 	Memory string `yaml:"memory,omitempty" json:"memory,omitempty"`
+	// CPU caps the container CPU. Docker compose accepts a fractional
+	// string ("1.5") or an integer; we pass it through verbatim so users
+	// keep full compose semantics. Empty means no limit.
+	CPU string `yaml:"cpu,omitempty" json:"cpu,omitempty"`
 }
 
 // Storage controls how the chain DB and logs are persisted on the host.

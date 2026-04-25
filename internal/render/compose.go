@@ -2,10 +2,46 @@ package render
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 )
+
+// sortedKeys returns the keys of m sorted lexicographically. We use it for
+// every map → YAML emission so the output is deterministic (intent_hash and
+// config_hash compare cleanly across runs).
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// composeEnvLines produces the "KEY=VAL" entries for a service's
+// "environment:" block, merging automatic witness-key passthrough with
+// intent.extra_env. Witness key wins on conflict so an accidental
+// extra_env entry can't shadow it.
+func composeEnvLines(node *intent.NodeSpec) []string {
+	env := make(map[string]string, len(node.ExtraEnv)+1)
+	for k, v := range node.ExtraEnv {
+		env[k] = v
+	}
+	if node.Type == "witness" && node.WitnessKeyEnv != "" {
+		env["WITNESS_PRIVATE_KEY"] = "${" + node.WitnessKeyEnv + "}"
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	keys := sortedKeys(env)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k+"="+env[k])
+	}
+	return out
+}
 
 // Filesystem layout inside the official tronprotocol/java-tron image
 // (defined by tron-docker tools/docker/Dockerfile + docker-entrypoint.sh):
@@ -55,12 +91,23 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 
 	containerConfigPath := fmt.Sprintf("%s/%s.conf", containerConfigDir, name)
 
+	restartPolicy := node.Restart
+	if restartPolicy == "" {
+		restartPolicy = "unless-stopped"
+	}
+
 	var sb strings.Builder
 	sb.WriteString("services:\n")
 	sb.WriteString(fmt.Sprintf("  %s:\n", name))
 	sb.WriteString(fmt.Sprintf("    image: %s\n", image))
 	sb.WriteString(fmt.Sprintf("    container_name: %s\n", name))
-	sb.WriteString("    restart: unless-stopped\n")
+	sb.WriteString(fmt.Sprintf("    restart: %s\n", restartPolicy))
+	if len(node.Labels) > 0 {
+		sb.WriteString("    labels:\n")
+		for _, k := range sortedKeys(node.Labels) {
+			sb.WriteString(fmt.Sprintf("      %s: %q\n", k, node.Labels[k]))
+		}
+	}
 	sb.WriteString("    ports:\n")
 	for _, p := range ports {
 		sb.WriteString(fmt.Sprintf("      - \"%s\"\n", p))
@@ -75,17 +122,24 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 	sb.WriteString(fmt.Sprintf("      - %s:%s\n", dataSrc, containerDataDir))
 	sb.WriteString(fmt.Sprintf("      - %s:%s\n", logsSrc, containerLogDir))
 
-	// Witness key passthrough is the only env we set; the image's entrypoint
-	// reads JVM args from the `-jvm "..."` command argument, not JAVA_OPTS.
-	if node.Type == "witness" && node.WitnessKeyEnv != "" {
+	// Environment merges (a) automatic witness-key passthrough, kept
+	// separate from user-controllable fields so it can't be omitted by
+	// accident, and (b) intent.extra_env for arbitrary per-deploy values.
+	envLines := composeEnvLines(node)
+	if len(envLines) > 0 {
 		sb.WriteString("    environment:\n")
-		sb.WriteString(fmt.Sprintf("      - WITNESS_PRIVATE_KEY=${%s}\n", node.WitnessKeyEnv))
+		for _, line := range envLines {
+			sb.WriteString("      - " + line + "\n")
+		}
 	}
 
 	sb.WriteString("    deploy:\n")
 	sb.WriteString("      resources:\n")
 	sb.WriteString("        limits:\n")
 	sb.WriteString(fmt.Sprintf("          memory: %s\n", memoryLimit))
+	if node.Resources.CPU != "" {
+		sb.WriteString(fmt.Sprintf("          cpus: %q\n", node.Resources.CPU))
+	}
 
 	// Command goes to ./bin/docker-entrypoint.sh which prefixes
 	// ./bin/FullNode and passes the rest. We let the entrypoint do that
@@ -98,6 +152,11 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 	}
 	sb.WriteString("      - \"-c\"\n")
 	sb.WriteString(fmt.Sprintf("      - %q\n", containerConfigPath))
+	// Extra args slot in between the standard FullNode flags and --witness
+	// so the witness flag (when present) always lands last.
+	for _, a := range node.ExtraArgs {
+		sb.WriteString(fmt.Sprintf("      - %q\n", a))
+	}
 	if node.Type == "witness" {
 		sb.WriteString("      - \"--witness\"\n")
 	}

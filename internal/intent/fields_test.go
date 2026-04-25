@@ -513,6 +513,116 @@ func TestStorage_AllShapesParseAndPersist(t *testing.T) {
 	}
 }
 
+// --- nodes[].restart / extra_env / extra_args / labels / resources.cpu ---
+
+func TestRestart_Enum(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"no", false},
+		{"on-failure", false},
+		{"always", false},
+		{"unless-stopped", false},
+		{"", false},
+		{"forever", true},
+		{"sometimes", true},
+	}
+	for _, tc := range cases {
+		t.Run("restart="+tc.val, func(t *testing.T) {
+			body := ""
+			if tc.val != "" {
+				body = "    restart: " + tc.val + "\n"
+			}
+			y := []byte("name: r\nnetwork: mainnet\ntarget: {type: local}\nnodes:\n  - type: fullnode\n" + body)
+			_, err := Parse(y)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestExtraEnv_Parses(t *testing.T) {
+	y := []byte(`
+name: e
+network: mainnet
+target: {type: local}
+nodes:
+  - type: fullnode
+    extra_env:
+      LOG_LEVEL: DEBUG
+      CUSTOM: "1"
+`)
+	i, err := Parse(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i.Nodes[0].ExtraEnv["LOG_LEVEL"] != "DEBUG" || i.Nodes[0].ExtraEnv["CUSTOM"] != "1" {
+		t.Errorf("extra_env mismatch: %+v", i.Nodes[0].ExtraEnv)
+	}
+}
+
+func TestExtraArgs_Parses(t *testing.T) {
+	y := []byte(`
+name: a
+network: mainnet
+target: {type: local}
+nodes:
+  - type: fullnode
+    extra_args: ["--debug", "--flag=v"]
+`)
+	i, err := Parse(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(i.Nodes[0].ExtraArgs) != 2 || i.Nodes[0].ExtraArgs[0] != "--debug" {
+		t.Errorf("extra_args mismatch: %+v", i.Nodes[0].ExtraArgs)
+	}
+}
+
+func TestLabels_Parses(t *testing.T) {
+	y := []byte(`
+name: l
+network: mainnet
+target: {type: local}
+nodes:
+  - type: fullnode
+    labels:
+      role: api
+      tier: edge
+`)
+	i, err := Parse(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i.Nodes[0].Labels["role"] != "api" || i.Nodes[0].Labels["tier"] != "edge" {
+		t.Errorf("labels mismatch: %+v", i.Nodes[0].Labels)
+	}
+}
+
+func TestResources_CPU(t *testing.T) {
+	y := []byte(`
+name: c
+network: mainnet
+target: {type: local}
+nodes:
+  - type: fullnode
+    resources:
+      cpu: "2.5"
+`)
+	i, err := Parse(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i.Nodes[0].Resources.CPU != "2.5" {
+		t.Errorf("cpu = %q, want 2.5", i.Nodes[0].Resources.CPU)
+	}
+}
+
 // --- multi-node intent parses ---
 
 func TestNodes_Multi(t *testing.T) {
