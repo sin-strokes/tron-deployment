@@ -23,6 +23,15 @@ var (
 	stateDirFlag  string
 )
 
+// version, commit and buildTime are populated at link time via -ldflags by
+// the Makefile and goreleaser. Defaults to "dev" so unstamped local builds
+// still report something coherent.
+var (
+	version   = "dev"
+	commit    = "none"
+	buildTime = "unknown"
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "trond",
 	Short: "TRON node deployment and lifecycle management",
@@ -33,6 +42,7 @@ then renders configuration and deploys via Docker or native jar+systemd.
 
 Supports local and remote (SSH) targets with structured JSON output
 for CI pipelines and AI agents.`,
+	Version: fmt.Sprintf("%s (commit %s, built %s)", version, commit, buildTime),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// Apply --state-dir before any subcommand runs so subpackages

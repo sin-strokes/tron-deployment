@@ -208,13 +208,26 @@ consumption.
 
 ## Configuration Templates
 
-Base java-tron configuration templates for rendering:
+Base java-tron configuration templates rendered into per-node HOCON. The
+mainnet and Nile templates track upstream — periodically refresh from the
+authoritative sources before tagging a release:
 
-| File | Network |
-|---|---|
-| `main_net_config.conf` | Mainnet |
-| `test_net_config.conf` | Nile testnet |
-| `private_net_config.conf` | Private network |
+| File | Network | Upstream source of truth |
+|---|---|---|
+| `main_net_config.conf` | Mainnet | https://github.com/tronprotocol/java-tron/blob/develop/framework/src/main/resources/config.conf |
+| `test_net_config.conf` | Nile testnet | https://github.com/tron-nile-testnet/nile-testnet/blob/master/framework/src/main/resources/config-nile.conf |
+| `private_net_config.conf` | Private network | maintained in-repo (no upstream) |
+
+Refresh from upstream:
+
+```bash
+make sync-templates    # fetches mainnet + nile, leaves private alone
+```
+
+After a sync, run `make test` and `./bin/trond config validate examples/*.yaml`
+to confirm nothing broke. Keep both copies in sync — `templates/<file>` is a
+symlink pointing at the root `<file>`, and `internal/render/templates/<file>`
+is the embedded copy used at runtime.
 
 ## Examples
 
