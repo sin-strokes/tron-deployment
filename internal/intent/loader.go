@@ -43,6 +43,26 @@ func Parse(data []byte) (*Intent, error) {
 	return &intent, nil
 }
 
+// ParseRaw returns the parsed Intent with defaults NOT applied. Used by
+// `config validate --explain` to distinguish explicit user values from
+// defaults at the field level.
+func ParseRaw(data []byte) (*Intent, error) {
+	var intent Intent
+	if err := yaml.Unmarshal(data, &intent); err != nil {
+		return nil, fmt.Errorf("parse intent YAML: %w", err)
+	}
+	return &intent, nil
+}
+
+// LoadRaw is the file-reading counterpart to ParseRaw.
+func LoadRaw(path string) (*Intent, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read intent file: %w", err)
+	}
+	return ParseRaw(data)
+}
+
 // Validate checks the intent against schema rules and security constraints.
 func Validate(intent *Intent) error {
 	// Name format
