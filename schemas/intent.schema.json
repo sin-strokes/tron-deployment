@@ -130,8 +130,7 @@
         "metrics": { "type": "boolean", "default": false },
         "jsonrpc": { "type": "boolean", "default": false },
         "rate_limit": { "type": "boolean", "default": true },
-        "event_subscribe": { "type": "boolean", "default": false },
-        "pbft": { "type": "boolean", "default": false }
+        "event_subscribe": { "type": "boolean", "default": false }
       }
     },
     "Resources": {

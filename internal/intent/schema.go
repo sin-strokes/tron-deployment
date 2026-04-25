@@ -39,12 +39,15 @@ type NodeSpec struct {
 }
 
 // Features contains feature flags for a node.
+//
+// Each *bool is tri-state: nil means "use the template's default", an
+// explicit true/false overrides. Render functions only emit overrides for
+// fields they know how to translate into HOCON; unknown fields are no-ops.
 type Features struct {
 	Metrics        *bool `yaml:"metrics,omitempty" json:"metrics,omitempty"`
 	JSONRPC        *bool `yaml:"jsonrpc,omitempty" json:"jsonrpc,omitempty"`
 	RateLimit      *bool `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 	EventSubscribe *bool `yaml:"event_subscribe,omitempty" json:"event_subscribe,omitempty"`
-	PBFT           *bool `yaml:"pbft,omitempty" json:"pbft,omitempty"`
 }
 
 // Resources specifies resource constraints.
