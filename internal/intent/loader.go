@@ -55,14 +55,40 @@ func Validate(intent *Intent) error {
 		return fmt.Errorf("intent validation: %w", err)
 	}
 
-	// Witness key env must be a variable name, not a raw key
+	// Witness nodes need a key source. Accept either the legacy top-level
+	// witness_key_env shortcut or the structured witness_key block. Both
+	// values are validated to be ENV var names (not raw hex keys) so a
+	// private key never leaks into the intent file by accident.
 	for i, node := range intent.Nodes {
-		if node.Type == "witness" {
-			if node.WitnessKeyEnv == "" {
-				return fmt.Errorf("nodes[%d]: witness node requires witness_key_env", i)
-			}
-			if err := validateWitnessKeyEnv(node.WitnessKeyEnv); err != nil {
+		if node.Type != "witness" {
+			continue
+		}
+		legacy := node.WitnessKeyEnv
+		var structured *WitnessKey
+		if node.WitnessKey != nil {
+			structured = node.WitnessKey
+		}
+
+		hasLegacy := legacy != ""
+		hasStructured := structured != nil &&
+			(structured.PrivateKeyEnv != "" || structured.KeystorePath != "")
+
+		if !hasLegacy && !hasStructured {
+			return fmt.Errorf("nodes[%d]: witness node requires witness_key_env or witness_key.{private_key_env,keystore_path}", i)
+		}
+		if hasLegacy {
+			if err := validateWitnessKeyEnv(legacy); err != nil {
 				return fmt.Errorf("nodes[%d]: %w", i, err)
+			}
+		}
+		if hasStructured && structured.PrivateKeyEnv != "" {
+			if err := validateWitnessKeyEnv(structured.PrivateKeyEnv); err != nil {
+				return fmt.Errorf("nodes[%d]: witness_key.private_key_env: %w", i, err)
+			}
+		}
+		if hasStructured && structured.KeystorePasswordEnv != "" {
+			if err := validateWitnessKeyEnv(structured.KeystorePasswordEnv); err != nil {
+				return fmt.Errorf("nodes[%d]: witness_key.keystore_password_env: %w", i, err)
 			}
 		}
 	}

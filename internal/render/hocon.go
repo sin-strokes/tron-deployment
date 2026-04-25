@@ -17,6 +17,19 @@ var NetworkTemplate = map[string]string{
 // RenderHOCON loads the base template for the network and applies intent-driven overrides.
 // Returns the final HOCON config as a string. templateDir may be empty, in
 // which case the embedded template is used.
+//
+// Override layering (last write wins, per HOCON spec):
+//
+//  1. Per-key line-level rewrites for ports + features. These keep the
+//     surrounding template comments and structure intact so the output is
+//     still legible to a human.
+//  2. An appended "trond overrides" block carrying everything from
+//     network_overrides + witness_key + config_overrides. HOCON merges by
+//     dotted-key, so anything written here trumps earlier values.
+//
+// Two layers exist because some keys (ports) need to stay in their original
+// place to keep the file diff-friendly, while bulk overrides are simpler
+// and safer to express as a final-section append.
 func RenderHOCON(templateDir string, i *intent.Intent, node *intent.NodeSpec) (string, error) {
 	data, err := LoadTemplate(templateDir, i.Network)
 	if err != nil {
@@ -25,13 +38,133 @@ func RenderHOCON(templateDir string, i *intent.Intent, node *intent.NodeSpec) (s
 
 	config := string(data)
 
-	// Apply port overrides
+	// 1. Targeted line-level rewrites.
 	config = applyPortOverrides(config, node)
-
-	// Apply feature overrides
 	config = applyFeatureOverrides(config, node)
 
+	// 2. Trailing override block (network_overrides + witness_key + config_overrides).
+	if appendix := renderHOCONAppendix(node); appendix != "" {
+		if !strings.HasSuffix(config, "\n") {
+			config += "\n"
+		}
+		config += "\n" + appendix
+	}
+
 	return config, nil
+}
+
+// renderHOCONAppendix produces the "trond overrides" block. Returns an
+// empty string when nothing is configured so the rendered HOCON stays
+// identical to today's output for users who don't use the new fields.
+func renderHOCONAppendix(node *intent.NodeSpec) string {
+	var lines []string
+
+	// --- network_overrides ---
+	no := &node.NetworkOverrides
+	if no.Seeds != nil {
+		lines = append(lines, "seed.node.ip.list = "+hoconStringList(*no.Seeds))
+	}
+	if no.ActivePeers != nil {
+		lines = append(lines, "node.active = "+hoconStringList(*no.ActivePeers))
+	}
+	if no.PassivePeers != nil {
+		lines = append(lines, "node.passive = "+hoconStringList(*no.PassivePeers))
+	}
+	if no.P2PVersion != nil {
+		lines = append(lines, fmt.Sprintf("node.p2p.version = %d", *no.P2PVersion))
+	}
+	if no.Discovery != nil {
+		lines = append(lines, fmt.Sprintf("node.discovery.enable = %t", *no.Discovery))
+	}
+	if no.MaxConnections != nil {
+		lines = append(lines, fmt.Sprintf("node.maxConnections = %d", *no.MaxConnections))
+	}
+	if no.MaxActiveSameIP != nil {
+		lines = append(lines, fmt.Sprintf("node.maxActiveNodesWithSameIp = %d", *no.MaxActiveSameIP))
+	}
+	if no.NeedSyncCheck != nil {
+		lines = append(lines, fmt.Sprintf("block.needSyncCheck = %t", *no.NeedSyncCheck))
+	}
+
+	// --- witness_key ---
+	if node.Type == "witness" && node.WitnessKey != nil {
+		wk := node.WitnessKey
+		switch {
+		case wk.PrivateKeyEnv != "":
+			// Render as ${ENVVAR}; the runtime substitutes at apply time
+			// (see envSubstitute).
+			lines = append(lines, fmt.Sprintf(`localwitness = ["${%s}"]`, wk.PrivateKeyEnv))
+		case wk.KeystorePath != "":
+			lines = append(lines, fmt.Sprintf("localwitnesskeystore = [%q]", wk.KeystorePath))
+		}
+		if wk.AccountAddress != "" {
+			lines = append(lines, fmt.Sprintf("localWitnessAccountAddress = %q", wk.AccountAddress))
+		}
+	}
+
+	// --- config_overrides (sorted for determinism) ---
+	if len(node.ConfigOverrides) > 0 {
+		keys := make([]string, 0, len(node.ConfigOverrides))
+		for k := range node.ConfigOverrides {
+			keys = append(keys, k)
+		}
+		sortStrings(keys)
+		for _, k := range keys {
+			lines = append(lines, fmt.Sprintf("%s = %s", k, hoconValue(node.ConfigOverrides[k])))
+		}
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# === trond overrides (last-write-wins) ===\n")
+	for _, l := range lines {
+		sb.WriteString(l)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// hoconStringList serialises a Go []string as a HOCON list of quoted strings.
+func hoconStringList(items []string) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	quoted := make([]string, len(items))
+	for i, s := range items {
+		quoted[i] = fmt.Sprintf("%q", s)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// hoconValue renders an arbitrary intent value (from config_overrides) as
+// the closest HOCON literal. Strings are double-quoted; numbers and bools
+// pass through; lists / maps are JSON-serialised, which HOCON accepts.
+func hoconValue(v any) string {
+	switch x := v.(type) {
+	case string:
+		return fmt.Sprintf("%q", x)
+	case bool:
+		return fmt.Sprintf("%t", x)
+	case int, int32, int64, float32, float64:
+		return fmt.Sprintf("%v", x)
+	default:
+		// Fall back to %v which works for slices/maps (HOCON accepts
+		// JSON-style for those).
+		return fmt.Sprintf("%v", x)
+	}
+}
+
+// sortStrings is a thin wrapper kept here so this file doesn't need to
+// import "sort" twice (compose.go has its own).
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
 }
 
 // applyPortOverrides patches port settings in the HOCON config.

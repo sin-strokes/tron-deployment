@@ -58,6 +58,154 @@ type NodeSpec struct {
 	// Labels become docker labels (or are stored verbatim in state for jar
 	// nodes). Test harnesses use them to filter `docker ps -f label=...`.
 	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+
+	// NetworkOverrides controls java-tron's networking section in the
+	// rendered HOCON: seed nodes, explicit peers, p2p protocol version,
+	// discovery toggle, connection caps, sync-check switch. These are the
+	// fields any private network or test enclave realistically needs to
+	// touch — they're fielded out instead of left to config_overrides so
+	// validation can catch typos.
+	NetworkOverrides NetworkOverrides `yaml:"network_overrides,omitempty" json:"network_overrides,omitempty"`
+
+	// WitnessKey configures how a witness node's signing key is delivered.
+	// Mutually exclusive with the legacy WitnessKeyEnv at the top level —
+	// when WitnessKey is non-zero it takes precedence and the env-only
+	// shortcut is ignored. Only meaningful for type: witness.
+	WitnessKey *WitnessKey `yaml:"witness_key,omitempty" json:"witness_key,omitempty"`
+
+	// ConfigOverrides is the long-tail HOCON escape hatch: keys that
+	// rarely need a typed field but still need to be overridable. The map
+	// values land verbatim in a "trond overrides" block appended to the
+	// rendered HOCON, where HOCON's last-write-wins semantics replace
+	// whatever the template said.
+	//
+	// Example:
+	//   config_overrides:
+	//     "vm.supportConstant": true
+	//     "block.maintenanceTimeInterval": 30000
+	//     "storage.db.engine": "ROCKSDB"
+	ConfigOverrides map[string]any `yaml:"config_overrides,omitempty" json:"config_overrides,omitempty"`
+
+	// --- Compose-only fields (no-op for jar runtime) ---
+
+	// Networks attaches the container to one or more pre-existing docker
+	// networks (declared external) instead of the auto-generated default.
+	// Useful when the harness wants chaos primitives or shared
+	// observability traffic on a known network.
+	Networks []string `yaml:"networks,omitempty" json:"networks,omitempty"`
+
+	// DependsOn produces a "depends_on:" list in compose so a node only
+	// starts after the named services are up. Names must reference other
+	// nodes in the same intent / network.
+	DependsOn []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+
+	// Healthcheck wires docker's native HEALTHCHECK directive. Independent
+	// from trond's own wait/health/diagnose — useful when downstream tools
+	// (orchestrators, CI dashboards) consume docker's health state.
+	Healthcheck *Healthcheck `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
+
+	// Ulimits exposes the file-descriptor cap, which java-tron is
+	// sensitive to under heavy peer loads.
+	Ulimits *Ulimits `yaml:"ulimits,omitempty" json:"ulimits,omitempty"`
+
+	// ExtraHosts produces "extra_hosts:" entries for /etc/hosts injection
+	// inside the container — handy when peers are reached by hostname and
+	// real DNS isn't configured (multi-node tests on a single host).
+	ExtraHosts map[string]string `yaml:"extra_hosts,omitempty" json:"extra_hosts,omitempty"`
+
+	// Entrypoint overrides the image entrypoint. Use with care — the
+	// official java-tron entrypoint expects to receive the same args we
+	// emit; replacing it means you take responsibility for the lifecycle.
+	Entrypoint []string `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
+
+	// Logging configures docker's log driver. Empty values mean "let
+	// docker decide" (which is usually json-file with no rotation).
+	Logging *Logging `yaml:"logging,omitempty" json:"logging,omitempty"`
+
+	// ShmSize sets /dev/shm. Only relevant for some VM/EVM workloads;
+	// java-tron's default is fine for most cases.
+	ShmSize string `yaml:"shm_size,omitempty" json:"shm_size,omitempty"`
+}
+
+// NetworkOverrides surfaces the typical java-tron networking knobs as
+// first-class intent fields. Anything left zero is omitted from the
+// override block (the template's value wins).
+type NetworkOverrides struct {
+	// Seeds replaces seed.node.ip.list. Empty list means "leave template
+	// default"; an explicit empty array `[]` (not nil) means "no seeds"
+	// and renders as an empty list — useful for fully isolated tests.
+	Seeds *[]string `yaml:"seeds,omitempty" json:"seeds,omitempty"`
+
+	// ActivePeers and PassivePeers map to node.active / node.passive.
+	// Same nil-vs-empty semantics as Seeds.
+	ActivePeers  *[]string `yaml:"active_peers,omitempty" json:"active_peers,omitempty"`
+	PassivePeers *[]string `yaml:"passive_peers,omitempty" json:"passive_peers,omitempty"`
+
+	// P2PVersion replaces node.p2p.version. Setting this to a unique
+	// value isolates the enclave from public networks even if the seed
+	// list slips through.
+	P2PVersion *int `yaml:"p2p_version,omitempty" json:"p2p_version,omitempty"`
+
+	// Discovery toggles node.discovery.enable. False stops the node
+	// broadcasting its presence — recommended for closed test enclaves.
+	Discovery *bool `yaml:"discovery,omitempty" json:"discovery,omitempty"`
+
+	// MaxConnections / MaxActiveSameIP map to node.maxConnections /
+	// node.maxActiveNodesWithSameIp. Useful when collocating many nodes
+	// on one host.
+	MaxConnections  *int `yaml:"max_connections,omitempty" json:"max_connections,omitempty"`
+	MaxActiveSameIP *int `yaml:"max_active_same_ip,omitempty" json:"max_active_same_ip,omitempty"`
+
+	// NeedSyncCheck maps to block.needSyncCheck. Must be false on the
+	// first node of a brand-new private network or it will hang waiting
+	// for peers to sync from.
+	NeedSyncCheck *bool `yaml:"need_sync_check,omitempty" json:"need_sync_check,omitempty"`
+}
+
+// WitnessKey describes how a witness node receives its signing key.
+// Exactly one of {PrivateKeyEnv, KeystorePath} should be set.
+type WitnessKey struct {
+	// PrivateKeyEnv is the NAME of an env var holding the raw hex
+	// private key. trond resolves the value at apply time and the key is
+	// written into a `localwitness = ["${value}"]` line in the HOCON.
+	PrivateKeyEnv string `yaml:"private_key_env,omitempty" json:"private_key_env,omitempty"`
+
+	// KeystorePath is an absolute path inside the runtime to a JKS-style
+	// keystore file. trond writes a `localwitnesskeystore = ["..."]`
+	// HOCON line referencing it. The keystore itself must be present
+	// (use `trond files put` or a baked image to deliver it).
+	KeystorePath string `yaml:"keystore_path,omitempty" json:"keystore_path,omitempty"`
+
+	// KeystorePasswordEnv (optional) names the env var that holds the
+	// keystore password. The value is passed through as KEYSTORE_PASSWORD
+	// to the runtime.
+	KeystorePasswordEnv string `yaml:"keystore_password_env,omitempty" json:"keystore_password_env,omitempty"`
+
+	// AccountAddress sets localWitnessAccountAddress for nodes operated
+	// via witnessPermission delegation.
+	AccountAddress string `yaml:"account_address,omitempty" json:"account_address,omitempty"`
+}
+
+// Healthcheck mirrors docker-compose's healthcheck block.
+type Healthcheck struct {
+	Test     []string `yaml:"test" json:"test" validate:"required,min=1"`
+	Interval string   `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Timeout  string   `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Retries  int      `yaml:"retries,omitempty" json:"retries,omitempty"`
+	// StartPeriod gives the container a grace window before failures count.
+	StartPeriod string `yaml:"start_period,omitempty" json:"start_period,omitempty"`
+}
+
+// Ulimits exposes the per-container ulimit knobs we actually care about
+// for java-tron.
+type Ulimits struct {
+	NOFile int `yaml:"nofile,omitempty" json:"nofile,omitempty"`
+}
+
+// Logging maps to docker-compose logging.
+type Logging struct {
+	Driver  string            `yaml:"driver,omitempty" json:"driver,omitempty"`
+	Options map[string]string `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
 // Features contains feature flags for a node.

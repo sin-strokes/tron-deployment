@@ -21,16 +21,40 @@ func sortedKeys(m map[string]string) []string {
 }
 
 // composeEnvLines produces the "KEY=VAL" entries for a service's
-// "environment:" block, merging automatic witness-key passthrough with
-// intent.extra_env. Witness key wins on conflict so an accidental
-// extra_env entry can't shadow it.
+// "environment:" block, merging:
+//   - intent.extra_env (user-defined)
+//   - witness key passthrough: java-tron reads `localwitness = ["${ENV}"]`
+//     from HOCON via typesafe-config's substitution, which requires ENV to
+//     be set in the container environment. Both witness_key.private_key_env
+//     (new) and witness_key_env (legacy) are honored; the former wins on
+//     conflict.
+//   - witness keystore password passthrough (witness_key.keystore_password_env)
+//
+// Witness-related entries always overwrite extra_env keys with the same
+// name so a stray ExtraEnv entry can't silently shadow them.
 func composeEnvLines(node *intent.NodeSpec) []string {
-	env := make(map[string]string, len(node.ExtraEnv)+1)
+	env := make(map[string]string, len(node.ExtraEnv)+2)
 	for k, v := range node.ExtraEnv {
 		env[k] = v
 	}
-	if node.Type == "witness" && node.WitnessKeyEnv != "" {
-		env["WITNESS_PRIVATE_KEY"] = "${" + node.WitnessKeyEnv + "}"
+	if node.Type == "witness" {
+		// Pick the env var name that the rendered HOCON will reference.
+		envName := node.WitnessKeyEnv
+		var passwordEnv string
+		if node.WitnessKey != nil && node.WitnessKey.PrivateKeyEnv != "" {
+			envName = node.WitnessKey.PrivateKeyEnv
+		}
+		if node.WitnessKey != nil {
+			passwordEnv = node.WitnessKey.KeystorePasswordEnv
+		}
+		if envName != "" {
+			// Passthrough using compose's "${VAR}" form so the host's value
+			// flows into the container at "compose up" time.
+			env[envName] = "${" + envName + "}"
+		}
+		if passwordEnv != "" {
+			env[passwordEnv] = "${" + passwordEnv + "}"
+		}
 	}
 	if len(env) == 0 {
 		return nil
@@ -108,6 +132,66 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 			sb.WriteString(fmt.Sprintf("      %s: %q\n", k, node.Labels[k]))
 		}
 	}
+	if len(node.DependsOn) > 0 {
+		sb.WriteString("    depends_on:\n")
+		for _, dep := range node.DependsOn {
+			sb.WriteString(fmt.Sprintf("      - %s\n", dep))
+		}
+	}
+	if len(node.Networks) > 0 {
+		sb.WriteString("    networks:\n")
+		for _, n := range node.Networks {
+			sb.WriteString(fmt.Sprintf("      - %s\n", n))
+		}
+	}
+	if len(node.Entrypoint) > 0 {
+		sb.WriteString("    entrypoint:\n")
+		for _, e := range node.Entrypoint {
+			sb.WriteString(fmt.Sprintf("      - %q\n", e))
+		}
+	}
+	if node.ShmSize != "" {
+		sb.WriteString(fmt.Sprintf("    shm_size: %q\n", node.ShmSize))
+	}
+	if node.Ulimits != nil && node.Ulimits.NOFile > 0 {
+		sb.WriteString("    ulimits:\n")
+		sb.WriteString(fmt.Sprintf("      nofile: %d\n", node.Ulimits.NOFile))
+	}
+	if len(node.ExtraHosts) > 0 {
+		sb.WriteString("    extra_hosts:\n")
+		for _, k := range sortedKeys(node.ExtraHosts) {
+			sb.WriteString(fmt.Sprintf("      - %s:%s\n", k, node.ExtraHosts[k]))
+		}
+	}
+	if hc := node.Healthcheck; hc != nil {
+		sb.WriteString("    healthcheck:\n")
+		sb.WriteString("      test:\n")
+		for _, t := range hc.Test {
+			sb.WriteString(fmt.Sprintf("        - %q\n", t))
+		}
+		if hc.Interval != "" {
+			sb.WriteString(fmt.Sprintf("      interval: %s\n", hc.Interval))
+		}
+		if hc.Timeout != "" {
+			sb.WriteString(fmt.Sprintf("      timeout: %s\n", hc.Timeout))
+		}
+		if hc.Retries > 0 {
+			sb.WriteString(fmt.Sprintf("      retries: %d\n", hc.Retries))
+		}
+		if hc.StartPeriod != "" {
+			sb.WriteString(fmt.Sprintf("      start_period: %s\n", hc.StartPeriod))
+		}
+	}
+	if log := node.Logging; log != nil && log.Driver != "" {
+		sb.WriteString("    logging:\n")
+		sb.WriteString(fmt.Sprintf("      driver: %s\n", log.Driver))
+		if len(log.Options) > 0 {
+			sb.WriteString("      options:\n")
+			for _, k := range sortedKeys(log.Options) {
+				sb.WriteString(fmt.Sprintf("        %s: %q\n", k, log.Options[k]))
+			}
+		}
+	}
 	sb.WriteString("    ports:\n")
 	for _, p := range ports {
 		sb.WriteString(fmt.Sprintf("      - \"%s\"\n", p))
@@ -173,6 +257,18 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 		}
 		if logsDecl != "" {
 			sb.WriteString(fmt.Sprintf("  %s:\n", logsDecl))
+		}
+	}
+
+	// Top-level "networks:" declares each user-supplied network as
+	// external, expecting the operator (or the test harness) to have
+	// created it ahead of time. Auto-creating would mask typos.
+	if len(node.Networks) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString("networks:\n")
+		for _, n := range node.Networks {
+			sb.WriteString(fmt.Sprintf("  %s:\n", n))
+			sb.WriteString("    external: true\n")
 		}
 	}
 

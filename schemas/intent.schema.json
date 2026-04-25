@@ -138,13 +138,82 @@
           "type": "object",
           "additionalProperties": { "type": "string" },
           "description": "Docker labels (or recorded in state for jar runtime)"
-        }
+        },
+        "network_overrides": { "$ref": "#/$defs/NetworkOverrides" },
+        "witness_key": { "$ref": "#/$defs/WitnessKey" },
+        "config_overrides": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Arbitrary HOCON dotted-key overrides appended to the rendered config"
+        },
+        "networks": { "type": "array", "items": { "type": "string" } },
+        "depends_on": { "type": "array", "items": { "type": "string" } },
+        "healthcheck": { "$ref": "#/$defs/Healthcheck" },
+        "ulimits": { "$ref": "#/$defs/Ulimits" },
+        "extra_hosts": { "type": "object", "additionalProperties": { "type": "string" } },
+        "entrypoint": { "type": "array", "items": { "type": "string" } },
+        "logging": { "$ref": "#/$defs/Logging" },
+        "shm_size": { "type": "string" }
       },
       "if": {
         "properties": { "type": { "const": "witness" } }
       },
       "then": {
-        "required": ["witness_key_env"]
+        "anyOf": [
+          { "required": ["witness_key_env"] },
+          { "required": ["witness_key"] }
+        ]
+      }
+    },
+    "NetworkOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seeds": { "type": "array", "items": { "type": "string" } },
+        "active_peers": { "type": "array", "items": { "type": "string" } },
+        "passive_peers": { "type": "array", "items": { "type": "string" } },
+        "p2p_version": { "type": "integer" },
+        "discovery": { "type": "boolean" },
+        "max_connections": { "type": "integer" },
+        "max_active_same_ip": { "type": "integer" },
+        "need_sync_check": { "type": "boolean" }
+      }
+    },
+    "WitnessKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "private_key_env": { "type": "string", "description": "Env var name holding the raw hex private key" },
+        "keystore_path": { "type": "string", "description": "Path inside container to keystore file" },
+        "keystore_password_env": { "type": "string" },
+        "account_address": { "type": "string", "description": "localWitnessAccountAddress for delegated witness" }
+      }
+    },
+    "Healthcheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test"],
+      "properties": {
+        "test": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "interval": { "type": "string" },
+        "timeout": { "type": "string" },
+        "retries": { "type": "integer" },
+        "start_period": { "type": "string" }
+      }
+    },
+    "Ulimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nofile": { "type": "integer" }
+      }
+    },
+    "Logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "driver": { "type": "string" },
+        "options": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     },
     "Features": {

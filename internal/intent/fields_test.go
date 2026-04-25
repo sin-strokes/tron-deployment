@@ -623,6 +623,183 @@ nodes:
 	}
 }
 
+// --- network_overrides ---
+
+func TestNetworkOverrides_Parses(t *testing.T) {
+	y := []byte(`
+name: no
+network: private
+target: {type: local}
+nodes:
+  - type: fullnode
+    network_overrides:
+      seeds: ["1.1.1.1:18888", "2.2.2.2:18888"]
+      active_peers: ["3.3.3.3:18888"]
+      p2p_version: 99999
+      discovery: false
+      max_connections: 8
+      need_sync_check: false
+`)
+	i, err := Parse(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	no := i.Nodes[0].NetworkOverrides
+	if no.Seeds == nil || len(*no.Seeds) != 2 {
+		t.Errorf("seeds: %+v", no.Seeds)
+	}
+	if no.ActivePeers == nil || len(*no.ActivePeers) != 1 {
+		t.Errorf("active_peers: %+v", no.ActivePeers)
+	}
+	if no.P2PVersion == nil || *no.P2PVersion != 99999 {
+		t.Errorf("p2p_version: %+v", no.P2PVersion)
+	}
+	if no.Discovery == nil || *no.Discovery {
+		t.Errorf("discovery: %+v", no.Discovery)
+	}
+	if no.MaxConnections == nil || *no.MaxConnections != 8 {
+		t.Errorf("max_connections: %+v", no.MaxConnections)
+	}
+	if no.NeedSyncCheck == nil || *no.NeedSyncCheck {
+		t.Errorf("need_sync_check: %+v", no.NeedSyncCheck)
+	}
+}
+
+// --- witness_key (structured) ---
+
+func TestWitnessKey_StructuredAccepted(t *testing.T) {
+	y := []byte(`
+name: wk
+network: private
+target: {type: local}
+nodes:
+  - type: witness
+    witness_key:
+      private_key_env: SR_KEY
+`)
+	i, err := Parse(y)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if i.Nodes[0].WitnessKey == nil || i.Nodes[0].WitnessKey.PrivateKeyEnv != "SR_KEY" {
+		t.Errorf("witness_key: %+v", i.Nodes[0].WitnessKey)
+	}
+}
+
+func TestWitnessKey_RawHexInPrivateKeyEnvRejected(t *testing.T) {
+	y := []byte(`
+name: bad
+network: private
+target: {type: local}
+nodes:
+  - type: witness
+    witness_key:
+      private_key_env: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`)
+	_, err := Parse(y)
+	if err == nil {
+		t.Fatal("expected raw-hex private_key_env to be rejected")
+	}
+	if !strings.Contains(err.Error(), "raw private key") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestWitness_NeedsAtLeastOneKeySource(t *testing.T) {
+	y := []byte(`
+name: nokey
+network: private
+target: {type: local}
+nodes:
+  - type: witness
+`)
+	_, err := Parse(y)
+	if err == nil {
+		t.Fatal("expected witness with no key to be rejected")
+	}
+}
+
+// --- config_overrides ---
+
+func TestConfigOverrides_Parses(t *testing.T) {
+	y := []byte(`
+name: co
+network: mainnet
+target: {type: local}
+nodes:
+  - type: fullnode
+    config_overrides:
+      "vm.supportConstant": true
+      "block.maintenanceTimeInterval": 30000
+      "storage.db.engine": "ROCKSDB"
+`)
+	i, err := Parse(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	co := i.Nodes[0].ConfigOverrides
+	if co["vm.supportConstant"] != true {
+		t.Errorf("vm.supportConstant: %v", co["vm.supportConstant"])
+	}
+	if co["storage.db.engine"] != "ROCKSDB" {
+		t.Errorf("storage.db.engine: %v", co["storage.db.engine"])
+	}
+}
+
+// --- compose-only fields parse ---
+
+func TestComposeFields_Parse(t *testing.T) {
+	y := []byte(`
+name: cf
+network: mainnet
+target: {type: local}
+nodes:
+  - type: fullnode
+    networks: [tron-mesh]
+    depends_on: [seed-node]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/"]
+      interval: 5s
+      retries: 3
+    ulimits: {nofile: 65535}
+    extra_hosts: {peer1: 10.0.0.1}
+    entrypoint: ["/bin/sh", "-c"]
+    logging:
+      driver: json-file
+      options: {max-size: "100m"}
+    shm_size: 64m
+`)
+	i, err := Parse(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := i.Nodes[0]
+	if len(n.Networks) != 1 || n.Networks[0] != "tron-mesh" {
+		t.Errorf("networks: %+v", n.Networks)
+	}
+	if len(n.DependsOn) != 1 || n.DependsOn[0] != "seed-node" {
+		t.Errorf("depends_on: %+v", n.DependsOn)
+	}
+	if n.Healthcheck == nil || len(n.Healthcheck.Test) != 4 || n.Healthcheck.Interval != "5s" {
+		t.Errorf("healthcheck: %+v", n.Healthcheck)
+	}
+	if n.Ulimits == nil || n.Ulimits.NOFile != 65535 {
+		t.Errorf("ulimits: %+v", n.Ulimits)
+	}
+	if n.ExtraHosts["peer1"] != "10.0.0.1" {
+		t.Errorf("extra_hosts: %+v", n.ExtraHosts)
+	}
+	if len(n.Entrypoint) != 2 {
+		t.Errorf("entrypoint: %+v", n.Entrypoint)
+	}
+	if n.Logging == nil || n.Logging.Driver != "json-file" {
+		t.Errorf("logging: %+v", n.Logging)
+	}
+	if n.ShmSize != "64m" {
+		t.Errorf("shm_size: %q", n.ShmSize)
+	}
+}
+
 // --- multi-node intent parses ---
 
 func TestNodes_Multi(t *testing.T) {
