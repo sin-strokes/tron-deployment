@@ -114,6 +114,9 @@
         },
         "ports": {
           "$ref": "#/$defs/PortMapping"
+        },
+        "storage": {
+          "$ref": "#/$defs/Storage"
         }
       },
       "if": {
@@ -137,8 +140,17 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "memory": { "type": "string", "default": "16GB" },
-        "storage": { "type": "string" }
+        "memory": { "type": "string", "default": "16GB" }
+      }
+    },
+    "Storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where to persist chain data and logs. Each field accepts an absolute path (bind-mount) or a bare name (docker named volume). Empty fields default to '<node-name>-data' / '<node-name>-logs'. If 'path' is set, 'data' and 'logs' are auto-derived as '<path>/data' and '<path>/logs'.",
+      "properties": {
+        "data": { "type": "string", "description": "Source for /java-tron/output-directory (chain DB)" },
+        "logs": { "type": "string", "description": "Source for /java-tron/logs" },
+        "path": { "type": "string", "description": "Single host root; data and logs become <path>/data and <path>/logs" }
       }
     },
     "JVMConfig": {

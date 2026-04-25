@@ -68,10 +68,12 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 	sb.WriteString("    volumes:\n")
 	// HOCON config: read-only bind mount of the rendered file into /java-tron/conf.
 	sb.WriteString(fmt.Sprintf("      - ./%s.conf:%s:ro\n", name, containerConfigPath))
-	// Persistent state — the chain DB lives here, MUST be persisted.
-	sb.WriteString(fmt.Sprintf("      - %s-data:%s\n", name, containerDataDir))
-	// Logs — useful for post-mortem when a container crashes.
-	sb.WriteString(fmt.Sprintf("      - %s-logs:%s\n", name, containerLogDir))
+	// Persistent state and logs — sources resolve from intent.storage with
+	// per-node defaults of "<name>-data" / "<name>-logs" (named volumes).
+	dataSrc := storageSource(name, &node.Storage, "data")
+	logsSrc := storageSource(name, &node.Storage, "logs")
+	sb.WriteString(fmt.Sprintf("      - %s:%s\n", dataSrc, containerDataDir))
+	sb.WriteString(fmt.Sprintf("      - %s:%s\n", logsSrc, containerLogDir))
 
 	// Witness key passthrough is the only env we set; the image's entrypoint
 	// reads JVM args from the `-jvm "..."` command argument, not JAVA_OPTS.
@@ -100,12 +102,59 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 		sb.WriteString("      - \"--witness\"\n")
 	}
 
-	sb.WriteString("\n")
-	sb.WriteString("volumes:\n")
-	sb.WriteString(fmt.Sprintf("  %s-data:\n", name))
-	sb.WriteString(fmt.Sprintf("  %s-logs:\n", name))
+	// Top-level "volumes:" only declares named volumes; bind-mount paths
+	// (those starting with "/") need no declaration.
+	dataDecl := volumeDeclName(dataSrc)
+	logsDecl := volumeDeclName(logsSrc)
+	if dataDecl != "" || logsDecl != "" {
+		sb.WriteString("\n")
+		sb.WriteString("volumes:\n")
+		if dataDecl != "" {
+			sb.WriteString(fmt.Sprintf("  %s:\n", dataDecl))
+		}
+		if logsDecl != "" {
+			sb.WriteString(fmt.Sprintf("  %s:\n", logsDecl))
+		}
+	}
 
 	return sb.String()
+}
+
+// storageSource returns the compose volume "source" string for one of the
+// two storage roles (data, logs). Resolution order:
+//
+//  1. explicit storage.data / storage.logs in intent ⇒ used as-is
+//  2. storage.path set ⇒ "<path>/<role>" (bind-mount under a single root)
+//  3. default ⇒ "<name>-<role>" named volume
+//
+// A leading "/" marks a bind path; anything else is a named volume.
+func storageSource(name string, s *intent.Storage, role string) string {
+	switch role {
+	case "data":
+		if s != nil && s.Data != "" {
+			return s.Data
+		}
+	case "logs":
+		if s != nil && s.Logs != "" {
+			return s.Logs
+		}
+	}
+	if s != nil && s.StoragePath != "" {
+		// Trim trailing slash for clean joining.
+		root := strings.TrimRight(s.StoragePath, "/")
+		return root + "/" + role
+	}
+	return name + "-" + role
+}
+
+// volumeDeclName returns the named-volume identifier that should appear in
+// the top-level "volumes:" block, or "" when the source is a bind path
+// (which docker-compose mounts without prior declaration).
+func volumeDeclName(src string) string {
+	if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "./") {
+		return ""
+	}
+	return src
 }
 
 // renderComposePorts produces the host:container port mappings.

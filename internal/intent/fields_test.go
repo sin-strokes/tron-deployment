@@ -469,6 +469,50 @@ nodes: []
 	}
 }
 
+// --- nodes[].storage ---
+
+func TestStorage_AllShapesParseAndPersist(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want Storage
+	}{
+		{
+			name: "default omitted",
+			body: "",
+			want: Storage{},
+		},
+		{
+			name: "explicit named volumes",
+			body: "    storage:\n      data: shared-data\n      logs: my-logs\n",
+			want: Storage{Data: "shared-data", Logs: "my-logs"},
+		},
+		{
+			name: "explicit bind paths",
+			body: "    storage:\n      data: /var/lib/tron\n      logs: /var/log/tron\n",
+			want: Storage{Data: "/var/lib/tron", Logs: "/var/log/tron"},
+		},
+		{
+			name: "single-root path",
+			body: "    storage:\n      path: /opt/tron\n",
+			want: Storage{StoragePath: "/opt/tron"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yaml := []byte("name: s\nnetwork: mainnet\ntarget: {type: local}\nnodes:\n  - type: fullnode\n" + tc.body)
+			i, err := Parse(yaml)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			got := i.Nodes[0].Storage
+			if got.Data != tc.want.Data || got.Logs != tc.want.Logs || got.StoragePath != tc.want.StoragePath {
+				t.Errorf("storage = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 // --- multi-node intent parses ---
 
 func TestNodes_Multi(t *testing.T) {

@@ -36,6 +36,7 @@ type NodeSpec struct {
 	Resources      Resources   `yaml:"resources,omitempty" json:"resources,omitempty"`
 	JVM            *JVMConfig  `yaml:"jvm,omitempty" json:"jvm,omitempty"`
 	Ports          PortMapping `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Storage        Storage     `yaml:"storage,omitempty" json:"storage,omitempty"`
 }
 
 // Features contains feature flags for a node.
@@ -52,8 +53,24 @@ type Features struct {
 
 // Resources specifies resource constraints.
 type Resources struct {
-	Memory  string `yaml:"memory,omitempty" json:"memory,omitempty"`
-	Storage string `yaml:"storage,omitempty" json:"storage,omitempty"`
+	Memory string `yaml:"memory,omitempty" json:"memory,omitempty"`
+}
+
+// Storage controls how the chain DB and logs are persisted on the host.
+// Both fields accept either:
+//   - an absolute path (starts with "/"): bind-mounted as a host directory,
+//     useful for keeping data outside Docker (snapshots, backups, dev).
+//   - a bare name (no slash): treated as a docker named volume name,
+//     letting two enclaves share data or letting tests pre-seed a volume.
+//
+// Empty values fall back to the per-node defaults "<name>-data" and
+// "<name>-logs". If StoragePath is set, the data field is implicitly bound
+// at "<StoragePath>/data" and "<StoragePath>/logs" — convenient when you
+// just want one host root for everything.
+type Storage struct {
+	Data        string `yaml:"data,omitempty" json:"data,omitempty"`
+	Logs        string `yaml:"logs,omitempty" json:"logs,omitempty"`
+	StoragePath string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
 // JVMConfig provides optional JVM tuning overrides.
