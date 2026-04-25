@@ -206,6 +206,169 @@ let multiple CI jobs run in parallel against the same Docker daemon without
 colliding. Every command's `-o json` output is structured for downstream
 consumption.
 
+## Intent Reference
+
+The full set of fields trond accepts in an intent file. See
+`schemas/intent.schema.json` for the machine-readable JSON Schema.
+
+### Top-level
+
+```yaml
+name: <dns-label>             # required, ^[a-z0-9][a-z0-9-]{0,62}$
+network: mainnet|nile|private # required
+target: { ... }               # required, see below
+nodes: [ { ... }, ... ]       # required, at least one node
+```
+
+### Target
+
+```yaml
+target:
+  type: local|ssh             # required
+  runtime: docker|jar         # default: docker
+  host: <ip-or-hostname>      # required for ssh
+  user: <username>            # required for ssh
+  port: 22                    # ssh port
+  identity_file: ~/.ssh/...   # ssh key, supports ~ expansion
+  auto_ports: false           # true → trond allocates free OS ports
+                              # (essential for parallel test enclaves)
+```
+
+### Node
+
+```yaml
+nodes:
+  - type: fullnode|witness|solidity|lite     # required
+    version: latest                          # image tag for docker / jar version
+    image: tronprotocol/java-tron            # docker image
+    install_path: /opt/tron                  # jar runtime install root
+    process_manager: systemd|nohup           # jar runtime, default systemd
+    system_user: tron                        # jar runtime user
+
+    # Witness-only
+    witness_key:                             # preferred: structured block
+      private_key_env: SR_PRIVATE_KEY        # env var holding the hex key (inlined into HOCON at apply)
+      keystore_path: /opt/tron/ks.json       # OR path to keystore inside container
+      keystore_password_env: KS_PASS         # password env (forwarded to container)
+      account_address: TXxxx...              # localWitnessAccountAddress (delegated)
+    witness_key_env: SR_PRIVATE_KEY          # legacy shorthand (still works)
+
+    # Resources
+    resources:
+      memory: 16GB                           # used for memory limit + JVM heap default
+      cpu: "2.0"                             # docker compose cpus
+
+    # JVM tuning (all opt-in; defaults won't fight the upstream image)
+    jvm:
+      heap_max: 14g                          # explicit override
+      heap_new: 4g
+      direct_memory: 1g
+      gc: G1|CMS|auto                        # default auto = no GC flags
+      gc_log: false                          # opt-in to verbose GC logging
+
+    # Container ports (also written to HOCON)
+    ports:
+      http: 8090
+      grpc: 50051
+      solidity_http: 8091
+      solidity_grpc: 50061
+      jsonrpc: 8545
+      p2p: 18888
+      metrics: 9527
+
+    # Storage — chain DB + logs persistence
+    # Each accepts an absolute path (bind-mount) or bare name (named volume).
+    # If `path` is set, data → <path>/data, logs → <path>/logs.
+    storage:
+      data: /var/lib/tron                    # OR named-volume: shared-tron-db
+      logs: /var/log/tron
+      path: /opt/tron/main                   # single-root convenience
+
+    # Feature toggles (tri-state *bool)
+    features:
+      metrics: true                          # exposes Prometheus on ports.metrics
+      jsonrpc: true                          # enables EVM JSON-RPC
+      rate_limit: true                       # default true
+      event_subscribe: false
+
+    # Runtime / lifecycle
+    restart: unless-stopped                  # docker policy; jar maps to systemd
+    extra_env:                               # arbitrary env vars (witness key auto-inlined into HOCON, not env)
+      LOG_LEVEL: DEBUG
+    extra_args:                              # extra CLI flags after -c <conf>
+      - --debug
+    labels:                                  # docker labels
+      role: api
+
+    # HOCON network overrides (typed first-class fields)
+    network_overrides:
+      seeds: ["10.0.0.1:18888"]              # → seed.node.ip.list
+      active_peers: ["10.0.0.1:18888"]       # → node.active (auto-wired by network create)
+      passive_peers: []                      # → node.passive
+      p2p_version: 99999                     # → node.p2p.version (use unique value to isolate test enclaves)
+      discovery: false                       # → node.discovery.enable
+      max_connections: 8                     # → node.maxConnections
+      max_active_same_ip: 8                  # → node.maxActiveNodesWithSameIp
+      need_sync_check: false                 # → block.needSyncCheck (must be false for first SR of new private net)
+
+    # HOCON long-tail escape hatch — any dotted key
+    config_overrides:
+      "vm.supportConstant": true
+      "block.maintenanceTimeInterval": 30000
+      "storage.db.engine": "ROCKSDB"
+
+    # Compose-only fields (no-op for jar)
+    networks: [tron-mesh]                    # join external docker networks
+    depends_on: [seed-node]                  # service ordering
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/wallet/getnowblock"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    ulimits:
+      nofile: 65535
+    extra_hosts:
+      backup-node: 10.0.0.99
+    entrypoint: ["/usr/local/bin/wrapper"]   # only if you really need to override
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: "10"
+    shm_size: 256m
+```
+
+### How HOCON overrides land
+
+The render layers per-node HOCON in two passes (last-write-wins per HOCON spec):
+
+1. **In-place rewrites** keep the upstream template legible: `ports.*` and
+   `features.jsonrpc` get patched at the existing line.
+2. **Trailing override block** (`# === trond overrides ===`) is appended
+   to the end of the conf carrying every value derived from
+   `network_overrides`, `witness_key`, and `config_overrides`. HOCON's
+   merge semantics make these win regardless of where the template wrote
+   the same key.
+
+The witness private key is **inlined** into this block at apply time —
+java-tron's typesafe-config does not perform `${ENV}` substitution.
+The conf file's 0600 perms keep the secret on disk, never echoed to stdout.
+
+### Container filesystem layout
+
+trond aligns with the official `tronprotocol/java-tron` image (built from
+`tron-docker tools/docker/Dockerfile`):
+
+| Path | Mounted from |
+|---|---|
+| `/java-tron/conf/<name>.conf` | rendered HOCON (read-only) |
+| `/java-tron/output-directory` | chain DB volume / bind |
+| `/java-tron/logs` | log volume / bind |
+
+The image's entrypoint (`./bin/docker-entrypoint.sh`) execs
+`./bin/FullNode` with the args trond emits — no `java -jar` workarounds.
+
 ## Configuration Templates
 
 Base java-tron configuration templates rendered into per-node HOCON. The

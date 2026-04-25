@@ -121,6 +121,81 @@ Each line is the audit-log entry for a mutating command (apply, stop, start,
 remove, upgrade, rollback, restart, network create/destroy/add). Use
 `--since <duration>` to filter to a recent window.
 
+## Bringing up a private network
+
+`trond network create` is the typical entry point for a multi-node
+private testnet. trond pre-renders all node intents, then deploys them
+in order. Two automations make this robust without per-node hand
+configuration:
+
+1. **`auto_ports: true`** under `target:` allocates fresh OS ports per
+   node so concurrent enclaves don't collide on host ports. The
+   in-container P2P port is randomized too, so peers must be addressed
+   by container name + the rendered port.
+
+2. **Auto-wired peering**: trond fills each node's
+   `network_overrides.active_peers` with the addresses of every other
+   node in the network using the form `<container-name>:<rendered-p2p-port>`
+   — UNLESS the user supplied an explicit list (even an empty one).
+   That makes the docker-network DNS resolve to the right port.
+
+A complete 2-node private intent looks like:
+
+```yaml
+name: pn
+network: private
+target:
+  type: local
+  runtime: docker
+  auto_ports: true
+nodes:
+  # Block-producing SR
+  - type: witness
+    image: tronprotocol/java-tron
+    resources: {memory: 4GB}
+    witness_key:
+      private_key_env: SR_KEY    # value inlined into rendered HOCON
+    networks: [tron-pn-mesh]     # pre-create with `docker network create`
+    network_overrides:
+      p2p_version: 88888         # unique value; isolates from public networks
+      discovery: false
+      need_sync_check: false     # required for first SR of a fresh chain
+
+  # Fullnode that follows the SR
+  - type: fullnode
+    image: tronprotocol/java-tron
+    resources: {memory: 4GB}
+    networks: [tron-pn-mesh]
+    network_overrides:
+      p2p_version: 88888
+      discovery: false
+      # active_peers auto-wired to ["pn-node0:<p2p>"] by trond
+```
+
+Driver script:
+
+```bash
+docker network create tron-pn-mesh
+SR_KEY=da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0 \
+  trond --state-dir /tmp/trond-$JOB \
+  network create --intent pn.yaml -o json
+```
+
+Verify success by tailing the logs volumes:
+
+```bash
+docker run --rm -v pn-node0_pn-node0-logs:/L alpine \
+  grep -c "Produce block successfully" /L/tron.log    # SR is producing
+docker run --rm -v pn-node1_pn-node1-logs:/L alpine \
+  grep -oE 'header number = [0-9]+' /L/tron.log | tail -1    # fullnode synced height
+```
+
+The default private-net witness private key
+(`da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0`) matches
+the genesis address `TPL66VK2gCXNCD7EJg9pgJRfqcRazjhUZY` baked into the
+`private_net_config.conf` template. Use that exact key unless you also
+supply a fresh genesis block.
+
 ## Tear-down: always clean up
 
 ```bash
