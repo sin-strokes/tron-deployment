@@ -62,6 +62,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	store, _ := state.NewStore(paths.State())
 	deployState, _ := store.Load()
 
+	// Auto-wire peering between siblings before rendering. After
+	// intent.Load() ports are final (defaults applied, auto_ports
+	// resolved), so we can synthesise stable inter-container addresses.
+	// Each node's network_overrides.active_peers is set to all OTHER
+	// nodes' "<name>:<p2p_port>" — except when the user supplied an
+	// explicit list, which we never override.
+	autoWireActivePeers(parsed)
+
 	var deployed []map[string]any
 
 	for i, node := range parsed.Nodes {
@@ -96,6 +104,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
+		// Capture the (post-defaults, post-auto-allocation) ports in state
+		// so inspect / health / diagnose / events can target the right
+		// host endpoint without re-reading the intent file.
 		mn := state.ManagedNode{
 			Name:    nodeName,
 			Version: node.Version,
@@ -105,13 +116,19 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			Runtime:     "docker",
 			Status:      "running",
 			LastApplied: time.Now().UTC(),
+			HTTPPort:    node.Ports.HTTP,
+			GRPCPort:    node.Ports.GRPC,
 		}
 		store.UpsertNode(deployState, mn)
 
 		deployed = append(deployed, map[string]any{
-			"name":   nodeName,
-			"type":   node.Type,
+			"name": nodeName,
+			"type": node.Type,
 			"status": "running",
+			"endpoints": map[string]string{
+				"http": fmt.Sprintf("http://127.0.0.1:%d", node.Ports.HTTP),
+				"grpc": fmt.Sprintf("127.0.0.1:%d", node.Ports.GRPC),
+			},
 		})
 	}
 
@@ -124,6 +141,45 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 	output.WriteJSON(os.Stdout, result)
 	return nil
+}
+
+// autoWireActivePeers fills each node's network_overrides.active_peers
+// with the addresses of all OTHER nodes in the network. We only touch
+// nodes whose active_peers is unset; the user can opt out by supplying
+// even an empty list ([] explicitly, parsed as a non-nil zero-length
+// slice). Addresses use the docker-compose container name as host so
+// they resolve correctly inside the shared docker network.
+//
+// Why this is necessary: with auto_ports the rendered P2P port is no
+// longer 18888, and the user can't know that port at intent-write time.
+// seed.node lists alone aren't enough to keep peers connected when
+// node.discovery is off, so node.active is the right field — and
+// network create is the one command that knows enough about siblings
+// to populate it deterministically.
+func autoWireActivePeers(parsed *intent.Intent) {
+	addresses := make([]string, len(parsed.Nodes))
+	for i := range parsed.Nodes {
+		nodeName := fmt.Sprintf("%s-node%d", parsed.Name, i)
+		addresses[i] = fmt.Sprintf("%s:%d", nodeName, parsed.Nodes[i].Ports.P2P)
+	}
+
+	for i := range parsed.Nodes {
+		// Skip nodes the user explicitly configured (even with []).
+		if parsed.Nodes[i].NetworkOverrides.ActivePeers != nil {
+			continue
+		}
+		var others []string
+		for j, addr := range addresses {
+			if j == i {
+				continue
+			}
+			others = append(others, addr)
+		}
+		if len(others) == 0 {
+			continue
+		}
+		parsed.Nodes[i].NetworkOverrides.ActivePeers = &others
+	}
 }
 
 func findTemplatesDir() string {
