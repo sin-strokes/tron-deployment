@@ -1,0 +1,491 @@
+package intent
+
+import (
+	"strings"
+	"testing"
+)
+
+// fields_test.go is the field-by-field matrix for intent validation. The
+// goal is to enumerate every typed field and exercise:
+//   - representative valid values
+//   - representative invalid values (where validation rejects them)
+//   - default values applied when the field is omitted
+//
+// Tests here intentionally overlap a little with loader_test.go — they're
+// organised by FIELD rather than by SCENARIO so a future change to a single
+// field has one obvious test file to update.
+
+// makeIntent builds a minimal-valid intent with overridable target/nodes.
+// Returns the YAML bytes ready for Parse.
+func makeIntent(extra string) []byte {
+	base := `name: m
+network: mainnet
+target:
+  type: local
+nodes:
+  - type: fullnode
+`
+	return []byte(base + extra)
+}
+
+// --- target.type / target.runtime ---
+
+func TestTargetType_Enum(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"local", false},
+		{"ssh", true}, // ssh requires host+user — without them, validation fails
+		{"docker", true},
+		{"", true},
+	}
+	for _, tc := range cases {
+		t.Run("type="+tc.val, func(t *testing.T) {
+			yaml := []byte("name: m\nnetwork: mainnet\ntarget:\n  type: " + tc.val + "\nnodes: [{type: fullnode}]\n")
+			_, err := Parse(yaml)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestTargetRuntime_Enum(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"docker", false},
+		{"jar", false},
+		{"", false}, // omitted → default "docker"
+		{"podman", true},
+		{"systemd", true},
+	}
+	for _, tc := range cases {
+		t.Run("runtime="+tc.val, func(t *testing.T) {
+			y := "target:\n  type: local\n  runtime: " + tc.val + "\n"
+			if tc.val == "" {
+				y = ""
+			}
+			yaml := []byte("name: m\nnetwork: mainnet\n" + y + "nodes: [{type: fullnode}]\n")
+			if y == "" {
+				yaml = []byte("name: m\nnetwork: mainnet\ntarget: {type: local}\nnodes: [{type: fullnode}]\n")
+			}
+			_, err := Parse(yaml)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error for runtime=%q", tc.val)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error for runtime=%q: %v", tc.val, err)
+			}
+		})
+	}
+}
+
+func TestTargetRuntime_DefaultsToDocker(t *testing.T) {
+	i, err := Parse(makeIntent(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i.Target.Runtime != "docker" {
+		t.Errorf("runtime default = %q, want docker", i.Target.Runtime)
+	}
+}
+
+// --- target.auto_ports ---
+
+func TestTargetAutoPorts(t *testing.T) {
+	yaml := []byte(`
+name: ap-test
+network: mainnet
+target:
+  type: local
+  auto_ports: true
+nodes:
+  - type: fullnode
+`)
+	i, err := Parse(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !i.Target.AutoPorts {
+		t.Error("AutoPorts not honored")
+	}
+	// With AutoPorts, the HTTP/GRPC defaults (8090/50051) should have been
+	// replaced by allocated ports.
+	if i.Nodes[0].Ports.HTTP == 8090 || i.Nodes[0].Ports.HTTP == 0 {
+		t.Errorf("auto_ports did not replace HTTP default, got %d", i.Nodes[0].Ports.HTTP)
+	}
+	if i.Nodes[0].Ports.GRPC == 50051 || i.Nodes[0].Ports.GRPC == 0 {
+		t.Errorf("auto_ports did not replace GRPC default, got %d", i.Nodes[0].Ports.GRPC)
+	}
+}
+
+func TestTargetAutoPorts_NodesDontOverlap(t *testing.T) {
+	yaml := []byte(`
+name: ap-mn
+network: private
+target:
+  type: local
+  auto_ports: true
+nodes:
+  - type: fullnode
+  - type: fullnode
+`)
+	i, err := Parse(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := i.Nodes[0].Ports, i.Nodes[1].Ports
+	if a.HTTP == b.HTTP || a.GRPC == b.GRPC || a.P2P == b.P2P {
+		t.Errorf("two nodes got overlapping auto-ports: %+v vs %+v", a, b)
+	}
+}
+
+// --- target.port (SSH) ---
+
+func TestTargetSSHPort_DefaultsTo22(t *testing.T) {
+	yaml := []byte(`
+name: sshd
+network: mainnet
+target:
+  type: ssh
+  host: example.com
+  user: root
+nodes: [{type: fullnode}]
+`)
+	i, err := Parse(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i.Target.Port != 22 {
+		t.Errorf("ssh port default = %d, want 22", i.Target.Port)
+	}
+}
+
+func TestTargetSSHIdentityFile_DefaultExpanded(t *testing.T) {
+	yaml := []byte(`
+name: sshd
+network: mainnet
+target:
+  type: ssh
+  host: example.com
+  user: root
+nodes: [{type: fullnode}]
+`)
+	i, err := Parse(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i.Target.IdentityFile == "" {
+		t.Error("identity_file default not applied")
+	}
+}
+
+// --- network ---
+
+func TestNetwork_Enum(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"mainnet", false},
+		{"nile", false},
+		{"private", false},
+		{"shasta", true},
+		{"testnet", true},
+		{"", true},
+	}
+	for _, tc := range cases {
+		t.Run("network="+tc.val, func(t *testing.T) {
+			yaml := []byte("name: n\nnetwork: " + tc.val + "\ntarget: {type: local}\nnodes: [{type: fullnode}]\n")
+			_, err := Parse(yaml)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// --- nodes[].type ---
+
+func TestNodeType_Enum(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool // when missing witness_key_env for "witness"
+	}{
+		{"fullnode", false},
+		{"solidity", false},
+		{"lite", false},
+		{"witness", true}, // requires witness_key_env, which we omit
+		{"observer", true},
+		{"", true},
+	}
+	for _, tc := range cases {
+		t.Run("nodeType="+tc.val, func(t *testing.T) {
+			yaml := []byte("name: n\nnetwork: mainnet\ntarget: {type: local}\nnodes:\n  - type: " + tc.val + "\n")
+			_, err := Parse(yaml)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// --- nodes[].process_manager ---
+
+func TestProcessManager_Enum(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"systemd", false},
+		{"nohup", false},
+		{"", false}, // omitted → default "systemd"
+		{"supervisor", true},
+		{"docker", true},
+	}
+	for _, tc := range cases {
+		t.Run("pm="+tc.val, func(t *testing.T) {
+			pm := ""
+			if tc.val != "" {
+				pm = "    process_manager: " + tc.val + "\n"
+			}
+			yaml := []byte("name: pm\nnetwork: mainnet\ntarget: {type: local}\nnodes:\n  - type: fullnode\n" + pm)
+			_, err := Parse(yaml)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// --- nodes[].jvm.gc ---
+
+func TestJVMGC_Enum(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"G1", false},
+		{"CMS", false},
+		{"auto", false},
+		{"", false}, // omitted entirely is fine
+		{"ZGC", true},
+		{"Parallel", true},
+	}
+	for _, tc := range cases {
+		t.Run("gc="+tc.val, func(t *testing.T) {
+			block := ""
+			if tc.val != "" {
+				block = "    jvm:\n      gc: " + tc.val + "\n"
+			}
+			yaml := []byte("name: gc\nnetwork: mainnet\ntarget: {type: local}\nnodes:\n  - type: fullnode\n" + block)
+			_, err := Parse(yaml)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// --- nodes[].features.* ---
+
+func TestFeatures_TriState(t *testing.T) {
+	yaml := []byte(`
+name: feat
+network: mainnet
+target: {type: local}
+nodes:
+  - type: fullnode
+    features:
+      metrics: true
+      jsonrpc: false
+      event_subscribe: true
+`)
+	i, err := Parse(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := i.Nodes[0].Features
+	if f.Metrics == nil || !*f.Metrics {
+		t.Error("metrics: true not parsed")
+	}
+	if f.JSONRPC == nil || *f.JSONRPC {
+		t.Error("jsonrpc: false not parsed")
+	}
+	if f.EventSubscribe == nil || !*f.EventSubscribe {
+		t.Error("event_subscribe: true not parsed")
+	}
+	// rate_limit was omitted; default flips it to true (per defaults.go).
+	if f.RateLimit == nil || !*f.RateLimit {
+		t.Error("rate_limit default true not applied")
+	}
+}
+
+// --- nodes[].ports.* ---
+
+func TestPorts_AllDefaultsApplied(t *testing.T) {
+	i, err := Parse(makeIntent(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := i.Nodes[0].Ports
+	expected := map[string]int{
+		"HTTP": 8090, "GRPC": 50051, "SolidityHTTP": 8091, "SolidityGRPC": 50061,
+		"JSONRPC": 8545, "P2P": 18888, "Metrics": 9527,
+	}
+	got := map[string]int{
+		"HTTP": p.HTTP, "GRPC": p.GRPC, "SolidityHTTP": p.SolidityHTTP, "SolidityGRPC": p.SolidityGRPC,
+		"JSONRPC": p.JSONRPC, "P2P": p.P2P, "Metrics": p.Metrics,
+	}
+	for k, want := range expected {
+		if got[k] != want {
+			t.Errorf("port %s default = %d, want %d", k, got[k], want)
+		}
+	}
+}
+
+func TestPorts_OverridesPreserved(t *testing.T) {
+	yaml := []byte(`
+name: po
+network: mainnet
+target: {type: local}
+nodes:
+  - type: fullnode
+    ports:
+      http: 19090
+      grpc: 51000
+      p2p: 28999
+      metrics: 19527
+`)
+	i, err := Parse(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := i.Nodes[0].Ports
+	if p.HTTP != 19090 || p.GRPC != 51000 || p.P2P != 28999 || p.Metrics != 19527 {
+		t.Errorf("port overrides lost: %+v", p)
+	}
+	// Unset ones still get defaults.
+	if p.SolidityHTTP != 8091 {
+		t.Errorf("unset SolidityHTTP lost default: %d", p.SolidityHTTP)
+	}
+}
+
+// --- nodes[].resources.memory ---
+
+func TestResourcesMemory_DefaultAndOverride(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"", "16GB"},     // default
+		{"32GB", "32GB"}, // explicit
+		{"8G", "8G"},
+		{"4096MB", "4096MB"},
+	}
+	for _, tc := range cases {
+		t.Run("mem="+tc.input, func(t *testing.T) {
+			block := ""
+			if tc.input != "" {
+				block = "    resources:\n      memory: " + tc.input + "\n"
+			}
+			yaml := []byte("name: m\nnetwork: mainnet\ntarget: {type: local}\nnodes:\n  - type: fullnode\n" + block)
+			i, err := Parse(yaml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if i.Nodes[0].Resources.Memory != tc.want {
+				t.Errorf("memory = %q, want %q", i.Nodes[0].Resources.Memory, tc.want)
+			}
+		})
+	}
+}
+
+// --- nodes[].witness_key_env (more shapes than loader_test) ---
+
+func TestWitnessKeyEnv_AcceptedShapes(t *testing.T) {
+	good := []string{"SR_KEY", "SECRET", "_PRIVATE", "K1"}
+	for _, v := range good {
+		if err := validateWitnessKeyEnv(v); err != nil {
+			t.Errorf("expected %q valid, got %v", v, err)
+		}
+	}
+}
+
+func TestWitnessKeyEnv_RejectedShapes(t *testing.T) {
+	bad := []struct {
+		val  string
+		hint string
+	}{
+		{"deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef", "raw private key"},
+		{"0xabc123", "raw private key"},
+		{"0Xabc123", "raw private key"},
+		{"not-an-env", "valid environment variable"},
+		{"1key", "valid environment variable"},
+		{" SPACED ", "valid environment variable"},
+	}
+	for _, tc := range bad {
+		err := validateWitnessKeyEnv(tc.val)
+		if err == nil {
+			t.Errorf("expected %q rejected", tc.val)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.hint) {
+			t.Errorf("err for %q = %v, want hint %q", tc.val, err, tc.hint)
+		}
+	}
+}
+
+// --- nodes[] minimum count ---
+
+func TestNodes_AtLeastOne(t *testing.T) {
+	yaml := []byte(`
+name: empty
+network: mainnet
+target: {type: local}
+nodes: []
+`)
+	_, err := Parse(yaml)
+	if err == nil {
+		t.Error("expected error for empty nodes")
+	}
+}
+
+// --- multi-node intent parses ---
+
+func TestNodes_Multi(t *testing.T) {
+	yaml := []byte(`
+name: multi
+network: private
+target: {type: local}
+nodes:
+  - type: fullnode
+  - type: fullnode
+  - type: lite
+`)
+	i, err := Parse(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(i.Nodes) != 3 {
+		t.Errorf("got %d nodes, want 3", len(i.Nodes))
+	}
+}
