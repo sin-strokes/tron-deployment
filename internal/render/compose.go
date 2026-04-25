@@ -21,40 +21,21 @@ func sortedKeys(m map[string]string) []string {
 }
 
 // composeEnvLines produces the "KEY=VAL" entries for a service's
-// "environment:" block, merging:
-//   - intent.extra_env (user-defined)
-//   - witness key passthrough: java-tron reads `localwitness = ["${ENV}"]`
-//     from HOCON via typesafe-config's substitution, which requires ENV to
-//     be set in the container environment. Both witness_key.private_key_env
-//     (new) and witness_key_env (legacy) are honored; the former wins on
-//     conflict.
-//   - witness keystore password passthrough (witness_key.keystore_password_env)
+// "environment:" block.
 //
-// Witness-related entries always overwrite extra_env keys with the same
-// name so a stray ExtraEnv entry can't silently shadow them.
+// The witness private key is inlined directly into the rendered HOCON
+// (java-tron's typesafe-config does NOT do ${ENV} substitution) so it
+// does NOT leak into the container env. The keystore password, however,
+// is read by the runtime startup hook, so we still pass it through when
+// witness_key.keystore_password_env is set.
 func composeEnvLines(node *intent.NodeSpec) []string {
-	env := make(map[string]string, len(node.ExtraEnv)+2)
+	env := make(map[string]string, len(node.ExtraEnv)+1)
 	for k, v := range node.ExtraEnv {
 		env[k] = v
 	}
-	if node.Type == "witness" {
-		// Pick the env var name that the rendered HOCON will reference.
-		envName := node.WitnessKeyEnv
-		var passwordEnv string
-		if node.WitnessKey != nil && node.WitnessKey.PrivateKeyEnv != "" {
-			envName = node.WitnessKey.PrivateKeyEnv
-		}
-		if node.WitnessKey != nil {
-			passwordEnv = node.WitnessKey.KeystorePasswordEnv
-		}
-		if envName != "" {
-			// Passthrough using compose's "${VAR}" form so the host's value
-			// flows into the container at "compose up" time.
-			env[envName] = "${" + envName + "}"
-		}
-		if passwordEnv != "" {
-			env[passwordEnv] = "${" + passwordEnv + "}"
-		}
+	if node.Type == "witness" && node.WitnessKey != nil && node.WitnessKey.KeystorePasswordEnv != "" {
+		passwordEnv := node.WitnessKey.KeystorePasswordEnv
+		env[passwordEnv] = "${" + passwordEnv + "}"
 	}
 	if len(env) == 0 {
 		return nil

@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
@@ -56,6 +57,16 @@ func RenderHOCON(templateDir string, i *intent.Intent, node *intent.NodeSpec) (s
 // renderHOCONAppendix produces the "trond overrides" block. Returns an
 // empty string when nothing is configured so the rendered HOCON stays
 // identical to today's output for users who don't use the new fields.
+//
+// Witness-key handling: java-tron parses HOCON via typesafe-config but
+// does NOT enable environment-variable substitution — `${VAR}` is treated
+// as an internal config-reference and fails when the referenced key
+// doesn't exist (the witness silently shuts down with "private key must
+// be 64 hex string, actual: 9", that 9 being the literal length of
+// `${SR_KEY}`). So we inline the env value at render time. The resulting
+// .conf file holds the secret in cleartext; we protect it via the
+// existing 0600 perms on the deployment dir and don't echo it back to
+// stdout.
 func renderHOCONAppendix(node *intent.NodeSpec) string {
 	var lines []string
 
@@ -87,18 +98,37 @@ func renderHOCONAppendix(node *intent.NodeSpec) string {
 	}
 
 	// --- witness_key ---
-	if node.Type == "witness" && node.WitnessKey != nil {
-		wk := node.WitnessKey
-		switch {
-		case wk.PrivateKeyEnv != "":
-			// Render as ${ENVVAR}; the runtime substitutes at apply time
-			// (see envSubstitute).
-			lines = append(lines, fmt.Sprintf(`localwitness = ["${%s}"]`, wk.PrivateKeyEnv))
-		case wk.KeystorePath != "":
-			lines = append(lines, fmt.Sprintf("localwitnesskeystore = [%q]", wk.KeystorePath))
+	if node.Type == "witness" {
+		// Resolve from either the structured block or the legacy field.
+		envName := ""
+		keystore := ""
+		var accountAddress string
+		if node.WitnessKey != nil {
+			envName = node.WitnessKey.PrivateKeyEnv
+			keystore = node.WitnessKey.KeystorePath
+			accountAddress = node.WitnessKey.AccountAddress
 		}
-		if wk.AccountAddress != "" {
-			lines = append(lines, fmt.Sprintf("localWitnessAccountAddress = %q", wk.AccountAddress))
+		if envName == "" {
+			envName = node.WitnessKeyEnv
+		}
+
+		switch {
+		case envName != "":
+			// Inline the resolved value at render time. typesafe-config
+			// won't substitute ${ENV} for us, so we have to do it here.
+			// If the env is unset at render time we emit a single-quoted
+			// placeholder that java-tron will reject loudly — better than
+			// silently rendering an empty key.
+			val := os.Getenv(envName)
+			if val == "" {
+				val = "<UNSET:" + envName + ">"
+			}
+			lines = append(lines, fmt.Sprintf(`localwitness = [%q]`, val))
+		case keystore != "":
+			lines = append(lines, fmt.Sprintf("localwitnesskeystore = [%q]", keystore))
+		}
+		if accountAddress != "" {
+			lines = append(lines, fmt.Sprintf("localWitnessAccountAddress = %q", accountAddress))
 		}
 	}
 
