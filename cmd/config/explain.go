@@ -10,16 +10,26 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/output"
 )
 
-var explainCmd = &cobra.Command{
-	Use:   "explain <key>",
-	Short: "Explain a HOCON config key",
-	Long:  "Look up an important java-tron HOCON config key and return its explanation.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runExplain,
+// docsCmd looks up documentation for a java-tron HOCON config key.
+//
+// Renamed from `explain` (kept as alias for backward compat) to disambiguate
+// from `config validate --explain`, which describes intent fields rather
+// than HOCON keys. Both flows are useful, but they answer different
+// questions:
+//
+//   trond config docs <hocon-key>            "what does this java-tron key mean?"
+//   trond config validate <intent> --explain "what will trond actually deploy?"
+var docsCmd = &cobra.Command{
+	Use:     "docs <key>",
+	Aliases: []string{"explain"},
+	Short:   "Look up documentation for a HOCON config key",
+	Long:    "Look up an important java-tron HOCON config key and return its documentation.",
+	Args:    cobra.ExactArgs(1),
+	RunE:    runExplain,
 }
 
 func init() {
-	Cmd.AddCommand(explainCmd)
+	Cmd.AddCommand(docsCmd)
 }
 
 // configExplanations is a quick lookup for common config keys.

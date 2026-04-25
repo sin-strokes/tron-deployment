@@ -104,7 +104,8 @@ trond status my-fullnode
 | `trond config validate` | Validate an intent file |
 | `trond config render` | Render HOCON config from intent |
 | `trond config diff` | Diff rendered vs deployed config |
-| `trond config explain <key>` | Explain a HOCON config key |
+| `trond config docs <key>` | Look up documentation for a HOCON config key (alias: `explain`) |
+| `trond config validate --explain` | Per-field intent breakdown (explicit / default / derived) |
 
 ### Networks
 
