@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/schemas/intent.schema.json",
+  "title": "trond Intent",
+  "description": "Declarative intent file for trond node deployment",
+  "type": "object",
+  "required": ["name", "target", "network", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "description": "Unique node identifier (DNS-label safe)"
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    },
+    "network": {
+      "type": "string",
+      "enum": ["mainnet", "nile", "private"],
+      "description": "TRON network to connect to"
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/NodeSpec"
+      }
+    }
+  },
+  "$defs": {
+    "Target": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["local", "ssh"]
+        },
+        "host": {
+          "type": "string",
+          "description": "Hostname or IP (required for ssh)"
+        },
+        "user": {
+          "type": "string",
+          "description": "SSH username (required for ssh)"
+        },
+        "port": {
+          "type": "integer",
+          "default": 22,
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "identity_file": {
+          "type": "string",
+          "default": "~/.ssh/id_rsa"
+        },
+        "runtime": {
+          "type": "string",
+          "enum": ["docker", "jar"],
+          "default": "docker"
+        }
+      },
+      "if": {
+        "properties": { "type": { "const": "ssh" } }
+      },
+      "then": {
+        "required": ["host", "user"]
+      }
+    },
+    "NodeSpec": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["fullnode", "witness", "solidity", "lite"]
+        },
+        "version": {
+          "type": "string",
+          "default": "latest"
+        },
+        "image": {
+          "type": "string",
+          "default": "tronprotocol/java-tron"
+        },
+        "install_path": {
+          "type": "string",
+          "default": "/opt/tron"
+        },
+        "process_manager": {
+          "type": "string",
+          "enum": ["systemd", "nohup"],
+          "default": "systemd"
+        },
+        "system_user": {
+          "type": "string",
+          "default": "tron"
+        },
+        "witness_key_env": {
+          "type": "string",
+          "description": "Environment variable name containing SR private key (required for witness)"
+        },
+        "features": {
+          "$ref": "#/$defs/Features"
+        },
+        "resources": {
+          "$ref": "#/$defs/Resources"
+        },
+        "jvm": {
+          "$ref": "#/$defs/JVMConfig"
+        },
+        "ports": {
+          "$ref": "#/$defs/PortMapping"
+        }
+      },
+      "if": {
+        "properties": { "type": { "const": "witness" } }
+      },
+      "then": {
+        "required": ["witness_key_env"]
+      }
+    },
+    "Features": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metrics": { "type": "boolean", "default": false },
+        "jsonrpc": { "type": "boolean", "default": false },
+        "rate_limit": { "type": "boolean", "default": true },
+        "event_subscribe": { "type": "boolean", "default": false },
+        "pbft": { "type": "boolean", "default": false }
+      }
+    },
+    "Resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory": { "type": "string", "default": "16GB" },
+        "storage": { "type": "string" }
+      }
+    },
+    "JVMConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "heap_max": { "type": "string" },
+        "heap_new": { "type": "string" },
+        "direct_memory": { "type": "string" },
+        "gc": { "type": "string", "enum": ["G1", "CMS", "auto"], "default": "auto" },
+        "gc_log": { "type": "boolean", "default": true }
+      }
+    },
+    "PortMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http": { "type": "integer", "default": 8090 },
+        "grpc": { "type": "integer", "default": 50051 },
+        "solidity_http": { "type": "integer", "default": 8091 },
+        "solidity_grpc": { "type": "integer", "default": 50061 },
+        "jsonrpc": { "type": "integer", "default": 8545 },
+        "p2p": { "type": "integer", "default": 18888 },
+        "metrics": { "type": "integer", "default": 9527 }
+      }
+    }
+  }
+}

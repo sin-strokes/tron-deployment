@@ -1,0 +1,22 @@
+# Deploy a mainnet fullnode locally via Docker
+name: my-fullnode
+
+target:
+  type: local
+  runtime: docker
+
+network: mainnet
+
+nodes:
+  - type: fullnode
+    version: latest
+    features:
+      jsonrpc: true
+      metrics: true
+    resources:
+      memory: 16GB
+    ports:
+      http: 8090
+      grpc: 50051
+      jsonrpc: 8545
+      p2p: 18888

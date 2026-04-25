@@ -1,0 +1,21 @@
+# Deploy a Nile testnet fullnode locally via Docker
+name: nile-fullnode
+
+target:
+  type: local
+  runtime: docker
+
+network: nile
+
+nodes:
+  - type: fullnode
+    version: latest
+    features:
+      jsonrpc: true
+    resources:
+      memory: 8GB
+    ports:
+      http: 8090
+      grpc: 50051
+      jsonrpc: 8545
+      p2p: 18888

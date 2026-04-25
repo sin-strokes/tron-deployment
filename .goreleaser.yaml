@@ -1,0 +1,58 @@
+version: 2
+
+project_name: trond
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: trond
+    main: .
+    binary: trond
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/tronprotocol/tron-deployment/cmd.version={{.Version}}
+      - -X github.com/tronprotocol/tron-deployment/cmd.commit={{.Commit}}
+      - -X github.com/tronprotocol/tron-deployment/cmd.buildTime={{.Date}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE*
+      - examples/*
+      - schemas/*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  github:
+    owner: tronprotocol
+    name: tron-deployment
+  draft: false
+  prerelease: auto

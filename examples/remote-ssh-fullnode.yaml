@@ -1,0 +1,26 @@
+# Deploy a mainnet fullnode on a remote server via SSH + Docker
+name: remote-fullnode
+
+target:
+  type: ssh
+  host: node01.example.com
+  user: deploy
+  port: 22
+  identity_file: ~/.ssh/id_rsa
+  runtime: docker
+
+network: mainnet
+
+nodes:
+  - type: fullnode
+    version: latest
+    features:
+      jsonrpc: true
+      metrics: true
+    resources:
+      memory: 16GB
+    ports:
+      http: 8090
+      grpc: 50051
+      jsonrpc: 8545
+      p2p: 18888

@@ -1,0 +1,143 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/runtime"
+	"github.com/tronprotocol/tron-deployment/internal/security"
+	"github.com/tronprotocol/tron-deployment/internal/state"
+	"github.com/tronprotocol/tron-deployment/internal/target"
+)
+
+// nodeContext bundles everything needed to operate on a managed node.
+type nodeContext struct {
+	Store   *state.Store
+	State   *state.DeploymentState
+	Node    *state.ManagedNode
+	Target  target.Target
+	Runtime runtime.Runtime
+}
+
+// Close releases resources (e.g., SSH connections).
+func (nc *nodeContext) Close() {
+	if closer, ok := nc.Target.(interface{ Close() error }); ok {
+		closer.Close()
+	}
+}
+
+// SaveState persists the current deployment state.
+func (nc *nodeContext) SaveState() error {
+	nc.Store.UpsertNode(nc.State, *nc.Node)
+	return nc.Store.Save(nc.State)
+}
+
+// runtimeExec runs a command in the node's runtime context. For Docker nodes
+// the command runs inside the container via "docker exec"; for jar nodes it
+// runs on the target host. Used by wait probes and exec subcommand so the
+// "where" of execution is consistent with each runtime.
+func (nc *nodeContext) runtimeExec(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	if nc.Node.Runtime == "jar" {
+		return nc.Target.Exec(ctx, bin, args...)
+	}
+	full := append([]string{"exec", nc.Node.Name, bin}, args...)
+	return nc.Target.Exec(ctx, "docker", full...)
+}
+
+// resolveNodeContext loads a node from state and constructs its target and runtime.
+func resolveNodeContext(name, outputFmt string) (*nodeContext, error) {
+	store, err := state.NewStore(statePath())
+	if err != nil {
+		return nil, err
+	}
+
+	deployState, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	node := store.GetNode(deployState, name)
+	if node == nil {
+		return nil, exitWithError(outputFmt, "NODE_NOT_FOUND", output.ExitGeneralError,
+			fmt.Sprintf("Node %q not found in state", name),
+			"Run: trond list",
+			"Deploy first: trond apply --intent <file>")
+	}
+
+	tgt, err := resolveTargetFromNode(node)
+	if err != nil {
+		return nil, exitWithError(outputFmt, "TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
+	}
+
+	rt := resolveRuntimeForNode(node, tgt)
+
+	return &nodeContext{
+		Store:   store,
+		State:   deployState,
+		Node:    node,
+		Target:  tgt,
+		Runtime: rt,
+	}, nil
+}
+
+func resolveTargetFromNode(node *state.ManagedNode) (target.Target, error) {
+	switch node.Target.Type {
+	case "ssh":
+		t := target.NewSSHTarget(node.Target.Host, node.Target.Port, node.Target.User, node.Target.IdentityFile)
+		if err := t.Connect(); err != nil {
+			return nil, fmt.Errorf("ssh connect to %s: %w", node.Target.Host, err)
+		}
+		return t, nil
+	default:
+		return target.NewLocalTarget(), nil
+	}
+}
+
+func resolveRuntimeForNode(node *state.ManagedNode, tgt target.Target) runtime.Runtime {
+	switch node.Runtime {
+	case "jar":
+		return runtime.NewJarRuntime(tgt)
+	default:
+		return runtime.NewDockerRuntime(tgt, deploymentsDir())
+	}
+}
+
+// auditEvent captures the arguments for an audit log write. Using a struct
+// keeps call sites self-documenting — positional parameters were easy to
+// reorder by mistake (e.g. swapping node and target).
+type auditEvent struct {
+	Command    string
+	Node       string
+	Target     string
+	IntentHash string
+	Result     string // "success", "error", "rollback"
+	ErrorCode  string
+	Start      time.Time
+}
+
+// writeAudit writes an audit log entry for a mutating command. Failures are
+// logged but never propagated — losing an audit line should not break the
+// command that triggered it.
+func writeAudit(ev auditEvent) {
+	al, err := security.NewAuditLog(auditLogPath())
+	if err != nil {
+		Log().Warn("audit log init failed", "error", err)
+		return
+	}
+	entry := security.AuditEntry{
+		Timestamp:  time.Now().UTC(),
+		Command:    ev.Command,
+		Node:       ev.Node,
+		Target:     ev.Target,
+		IntentHash: ev.IntentHash,
+		Result:     ev.Result,
+		DurationMs: time.Since(ev.Start).Milliseconds(),
+		ErrorCode:  ev.ErrorCode,
+	}
+	if writeErr := al.Write(entry); writeErr != nil {
+		Log().Warn("audit log write failed", "error", writeErr)
+	}
+}
+
