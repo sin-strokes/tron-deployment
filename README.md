@@ -26,14 +26,51 @@ A command-line tool for deploying, managing, and diagnosing [java-tron](https://
 
 ## Install
 
-### From release
-
-Download the latest binary from [Releases](https://github.com/tronprotocol/tron-deployment/releases):
+### One-liner
 
 ```bash
-# Linux amd64
-curl -LO https://github.com/tronprotocol/tron-deployment/releases/latest/download/trond_linux_amd64.tar.gz
-tar xzf trond_linux_amd64.tar.gz
+curl -fsSL https://raw.githubusercontent.com/tronprotocol/tron-deployment/master/scripts/install.sh | sh
+```
+
+The script downloads the latest release for your OS / arch, verifies the
+SHA256, and drops the binary into `/usr/local/bin` (or `~/.local/bin` if it
+can't write the system path). Set `TROND_VERSION=v0.x.y` to pin a specific
+release, or `TROND_DEST=/path` to install elsewhere.
+
+### Homebrew (macOS / Linuxbrew)
+
+```bash
+brew install tronprotocol/tap/trond
+```
+
+### Linux packages
+
+`.deb`, `.rpm`, and `.apk` packages are attached to every release, e.g.
+
+```bash
+# Debian / Ubuntu
+curl -LO https://github.com/tronprotocol/tron-deployment/releases/latest/download/trond_VERSION_linux_amd64.deb
+sudo dpkg -i trond_*.deb
+
+# RHEL / Fedora
+sudo rpm -i https://github.com/tronprotocol/tron-deployment/releases/latest/download/trond_VERSION_linux_amd64.rpm
+```
+
+### Docker
+
+```bash
+docker run --rm -v ~/.trond:/home/trond/.trond \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  tronprotocol/trond:latest --help
+```
+
+### From release tarball
+
+Download from [Releases](https://github.com/tronprotocol/tron-deployment/releases):
+
+```bash
+curl -LO https://github.com/tronprotocol/tron-deployment/releases/latest/download/trond_VERSION_linux_amd64.tar.gz
+tar xzf trond_VERSION_linux_amd64.tar.gz
 sudo mv trond /usr/local/bin/
 ```
 
@@ -47,6 +84,27 @@ make build
 ```
 
 Requires Go 1.25+.
+
+### Shell completion
+
+```bash
+# Print to stdout (pipe to wherever your shell loads from)
+trond completion bash
+trond completion zsh
+trond completion fish
+
+# Or install to the per-user default location
+trond completion --install bash    # → ~/.local/share/bash-completion/completions/trond
+trond completion --install zsh     # → ~/.config/zsh/completions/_trond
+trond completion --install fish    # → ~/.config/fish/completions/trond.fish
+```
+
+For zsh you'll also want this in `~/.zshrc` (one-time):
+
+```zsh
+fpath=(~/.config/zsh/completions $fpath)
+autoload -U compinit && compinit
+```
 
 ## Quickstart
 

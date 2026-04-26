@@ -1,0 +1,32 @@
+version: 2
+updates:
+  # Go modules — tron-deployment is a Go project; dependency hygiene
+  # matters because of cobra/yaml/x-crypto blast radius. Weekly cadence
+  # is plenty; trond is operational tooling, not on the security front
+  # line.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    labels:
+      - dependencies
+      - go
+
+  # GitHub Actions — pin via SHA in workflow files; dependabot will
+  # propose SHA bumps when actions release.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - github-actions

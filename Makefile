@@ -9,7 +9,7 @@ GOFLAGS    ?=
 GOTEST     := go test
 GOLINT     := golangci-lint
 
-.PHONY: build test lint e2e build-all clean fmt vet tidy sync-templates
+.PHONY: build test lint e2e build-all clean fmt vet tidy sync-templates docs man cover vuln
 
 ## build: Build the trond binary for the current platform
 build:
@@ -49,6 +49,26 @@ vet:
 ## tidy: Tidy go.mod
 tidy:
 	go mod tidy
+
+## docs: Generate per-command markdown reference (dist/docs/)
+docs:
+	@mkdir -p dist/docs
+	go run ./cmd/gendoc md dist/docs
+
+## man: Generate man(1) pages (dist/man/)
+man:
+	@mkdir -p dist/man
+	go run ./cmd/gendoc man dist/man
+
+## cover: Run tests with coverage and print per-function summary
+cover:
+	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out | tail
+
+## vuln: Run govulncheck against the module
+vuln:
+	@command -v govulncheck >/dev/null || go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
 
 ## sync-templates: Refresh mainnet + nile config templates from upstream
 ##                 Source-of-truth URLs:

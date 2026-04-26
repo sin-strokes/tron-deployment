@@ -43,12 +43,106 @@ snapshot:
 
 changelog:
   sort: asc
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Other
+      order: 999
   filters:
     exclude:
       - "^docs:"
       - "^test:"
       - "^ci:"
       - "^chore:"
+
+# Linux package formats — gives ops teams a real `apt install trond` /
+# `dnf install trond` story instead of "download a tarball".
+nfpms:
+  - id: trond-pkg
+    package_name: trond
+    vendor: TRON Foundation
+    homepage: https://github.com/tronprotocol/tron-deployment
+    maintainer: TRON Deployment Maintainers <opensource@tron.network>
+    description: |-
+      CLI for declarative TRON node deployment, lifecycle, and diagnostics.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/local/bin
+    section: net
+    contents:
+      - src: examples/
+        dst: /usr/share/trond/examples
+      - src: schemas/intent.schema.json
+        dst: /usr/share/trond/schemas/intent.schema.json
+      - src: LICENSE
+        dst: /usr/share/doc/trond/LICENSE
+        file_info:
+          mode: 0644
+
+# Homebrew tap so `brew install tronprotocol/tap/trond` works on macOS
+# and Linuxbrew. Requires the GitHub user to maintain a `homebrew-tap`
+# repo under the same org; goreleaser bumps the formula automatically
+# on every release.
+brews:
+  - name: trond
+    repository:
+      owner: tronprotocol
+      name: homebrew-tap
+      branch: main
+    homepage: https://github.com/tronprotocol/tron-deployment
+    description: CLI for declarative TRON node deployment
+    license: MIT
+    test: |
+      system "#{bin}/trond version"
+    install: |
+      bin.install "trond"
+      generate_completions_from_executable(bin/"trond", "completion")
+
+# Docker image — useful for CI runners and one-off "exec into a trond"
+# scenarios. Multi-arch via buildx; built from the same binaries that
+# the archive contains.
+dockers:
+  - id: trond-amd64
+    image_templates:
+      - "tronprotocol/trond:{{ .Version }}-amd64"
+      - "tronprotocol/trond:latest-amd64"
+    use: buildx
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile.release
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.source=https://github.com/tronprotocol/tron-deployment"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+  - id: trond-arm64
+    image_templates:
+      - "tronprotocol/trond:{{ .Version }}-arm64"
+      - "tronprotocol/trond:latest-arm64"
+    use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile.release
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.source=https://github.com/tronprotocol/tron-deployment"
+
+docker_manifests:
+  - name_template: "tronprotocol/trond:{{ .Version }}"
+    image_templates:
+      - "tronprotocol/trond:{{ .Version }}-amd64"
+      - "tronprotocol/trond:{{ .Version }}-arm64"
+  - name_template: "tronprotocol/trond:latest"
+    image_templates:
+      - "tronprotocol/trond:latest-amd64"
+      - "tronprotocol/trond:latest-arm64"
 
 release:
   github:

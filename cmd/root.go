@@ -67,6 +67,10 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&stateDirFlag, "state-dir", "", "Directory for state.json, audit.log, deployments (default ~/.trond, env: TROND_STATE_DIR)")
 }
 
+// Root returns the configured root cobra command, used by the doc/manpage
+// generator under cmd/gendoc and by tests that want to walk the tree.
+func Root() *cobra.Command { return rootCmd }
+
 // Execute runs the root command and returns the exit code.
 // StructuredError values are rendered in the requested format and their
 // ExitCode is returned. This runs after cobra has unwound all RunE deferred

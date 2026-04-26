@@ -11,18 +11,30 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/render"
 )
 
-var renderOutputDir string
+var (
+	renderOutputDir  string
+	renderOverlay    string
+	renderNodeFilter int
+)
 
 var renderCmd = &cobra.Command{
 	Use:   "render <intent-path>",
 	Short: "Render configuration from an intent file",
-	Long:  "Render HOCON config and docker-compose/systemd files from an intent, writing to stdout or --output-dir.",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runRender,
+	Long: `Render HOCON config and docker-compose/systemd files from an intent.
+
+  trond config render foo.yaml                   # all nodes, stdout
+  trond config render foo.yaml --output-dir out  # all nodes, files
+  trond config render foo.yaml --node 1          # only the second node
+  trond config render base.yaml --overlay env.yaml   # merge env on top
+  trond config render foo.yaml -o json           # structured payload`,
+	Args: cobra.ExactArgs(1),
+	RunE: runRender,
 }
 
 func init() {
 	renderCmd.Flags().StringVar(&renderOutputDir, "output-dir", "", "Directory to write rendered files (default: stdout)")
+	renderCmd.Flags().StringVar(&renderOverlay, "overlay", "", "Second intent merged on top of the primary one")
+	renderCmd.Flags().IntVar(&renderNodeFilter, "node", -1, "Render only the node at this index (default: all)")
 }
 
 // renderedNode is what `config render -o json` emits per node. Field
@@ -43,7 +55,13 @@ func runRender(cmd *cobra.Command, args []string) error {
 	intentPath := args[0]
 	outputFmt, _ := cmd.Flags().GetString("output")
 
-	parsed, err := intent.Load(intentPath)
+	var parsed *intent.Intent
+	var err error
+	if renderOverlay != "" {
+		parsed, err = intent.LoadWithOverlay(intentPath, renderOverlay)
+	} else {
+		parsed, err = intent.Load(intentPath)
+	}
 	if err != nil {
 		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
@@ -54,6 +72,9 @@ func runRender(cmd *cobra.Command, args []string) error {
 	rendered := make([]renderedNode, 0, len(parsed.Nodes))
 
 	for i, node := range parsed.Nodes {
+		if renderNodeFilter >= 0 && i != renderNodeFilter {
+			continue
+		}
 		// Render HOCON config
 		hocon, err := render.RenderHOCON(templateDir, parsed, &node)
 		if err != nil {
