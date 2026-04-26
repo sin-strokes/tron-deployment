@@ -83,10 +83,13 @@ func runExplain(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Not found
-	fmt.Fprintf(os.Stderr, "Key %q not found. Common keys:\n", key)
+	// Not found — return a structured error so scripts can branch on the
+	// exit code; suggestions list the keys we DO know about.
+	suggestions := make([]string, 0, len(configExplanations))
 	for k := range configExplanations {
-		fmt.Fprintf(os.Stderr, "  %s\n", k)
+		suggestions = append(suggestions, k)
 	}
-	return nil
+	return output.NewError("KEY_NOT_FOUND", output.ExitGeneralError,
+		fmt.Sprintf("HOCON key %q not documented", key)).
+		WithSuggestions(suggestions...)
 }
