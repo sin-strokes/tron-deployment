@@ -111,7 +111,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			Name:    nodeName,
 			Version: node.Version,
 			Target: state.NodeTarget{
-				Type: parsed.Target.Type,
+				Type:         parsed.Target.Type,
+				Host:         parsed.Target.Host,
+				User:         parsed.Target.User,
+				Port:         parsed.Target.Port,
+				IdentityFile: parsed.Target.IdentityFile,
 			},
 			Runtime:     "docker",
 			Status:      "running",

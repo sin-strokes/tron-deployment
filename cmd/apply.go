@@ -166,6 +166,13 @@ func runApply(cmd *cobra.Command, args []string) error {
 		systemdUnit := render.RenderSystemdUnit(parsed, node, jvmArgs, "", "")
 		deployOpts.SystemdData = []byte(systemdUnit)
 		deployOpts.JarPath = filepath.Join(node.InstallPath, "FullNode.jar")
+		// If the intent specifies a download source, hand it to the
+		// runtime so it does the fetch+verify dance. Otherwise the
+		// operator is expected to have pre-staged the jar.
+		if node.Jar != nil {
+			deployOpts.JarURL = node.Jar.URL
+			deployOpts.JarSHA256 = node.Jar.SHA256
+		}
 
 		rt := runtime.NewJarRuntime(tgt)
 		if err := rt.Deploy(cmd.Context(), deployOpts); err != nil {
@@ -181,10 +188,11 @@ func runApply(cmd *cobra.Command, args []string) error {
 		ConfigHash: configHash,
 		Version:    node.Version,
 		Target: state.NodeTarget{
-			Type: parsed.Target.Type,
-			Host: parsed.Target.Host,
-			User: parsed.Target.User,
-			Port: parsed.Target.Port,
+			Type:         parsed.Target.Type,
+			Host:         parsed.Target.Host,
+			User:         parsed.Target.User,
+			Port:         parsed.Target.Port,
+			IdentityFile: parsed.Target.IdentityFile,
 		},
 		Runtime:     runtimeType,
 		Status:      "running",

@@ -125,6 +125,24 @@ type NodeSpec struct {
 	// ShmSize sets /dev/shm. Only relevant for some VM/EVM workloads;
 	// java-tron's default is fine for most cases.
 	ShmSize string `yaml:"shm_size,omitempty" json:"shm_size,omitempty"`
+
+	// Jar configures where to fetch the FullNode.jar for jar-runtime
+	// targets. Without it, trond assumes the operator has pre-placed the
+	// jar at <install_path>/FullNode.jar — which is fine for AMI / Ansible
+	// flows but breaks first-time provisioning. Only consulted when the
+	// target's runtime is "jar".
+	Jar *JarSource `yaml:"jar,omitempty" json:"jar,omitempty"`
+}
+
+// JarSource tells trond where (and how) to fetch the java-tron jar for a
+// jar-runtime deployment.
+type JarSource struct {
+	// URL is the download location. https URLs only (we don't want to
+	// install jars over plaintext http even on a private network).
+	URL string `yaml:"url" json:"url" validate:"omitempty,url"`
+	// SHA256 is the lowercase hex digest. Empty means "skip integrity
+	// check" — supported but emits a warning.
+	SHA256 string `yaml:"sha256,omitempty" json:"sha256,omitempty"`
 }
 
 // NetworkOverrides surfaces the typical java-tron networking knobs as
