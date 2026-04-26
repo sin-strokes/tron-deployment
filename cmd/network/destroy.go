@@ -46,11 +46,28 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Pre-flight: refuse to "destroy" a name that owns zero nodes — almost
+	// always a typo (e.g. `--confirm=wrng` instead of the real network).
+	// Returning success on a no-op silently masks the mistake.
+	prefix := destroyConfirm + "-node"
+	matchesAny := false
+	for _, n := range deployState.Nodes {
+		if strings.HasPrefix(n.Name, prefix) || n.Name == destroyConfirm {
+			matchesAny = true
+			break
+		}
+	}
+	if !matchesAny {
+		return output.NewError("NETWORK_NOT_FOUND", output.ExitGeneralError,
+			"no network named "+destroyConfirm+" — nothing to destroy").
+			WithSuggestions("Run: trond network status",
+				"Run: trond list  (to see all managed nodes)")
+	}
+
 	workDir := paths.Deployments()
 	tgt := target.NewLocalTarget()
 
 	var removed []string
-	prefix := destroyConfirm + "-node"
 
 	// Find and remove all network nodes
 	for i := len(deployState.Nodes) - 1; i >= 0; i-- {
