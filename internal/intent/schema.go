@@ -11,10 +11,10 @@ type Intent struct {
 // Target specifies where to deploy.
 type Target struct {
 	Type         string `yaml:"type" json:"type" validate:"required,oneof=local ssh"`
-	Host         string `yaml:"host,omitempty" json:"host,omitempty" validate:"required_if=Type ssh"`
-	User         string `yaml:"user,omitempty" json:"user,omitempty" validate:"required_if=Type ssh"`
+	Host         string `yaml:"host,omitempty" json:"host,omitempty" validate:"required_if=Type ssh,omitempty,safe_string"`
+	User         string `yaml:"user,omitempty" json:"user,omitempty" validate:"required_if=Type ssh,omitempty,safe_string"`
 	Port         int    `yaml:"port,omitempty" json:"port,omitempty"`
-	IdentityFile string `yaml:"identity_file,omitempty" json:"identity_file,omitempty"`
+	IdentityFile string `yaml:"identity_file,omitempty" json:"identity_file,omitempty" validate:"omitempty,safe_string"`
 	Runtime      string `yaml:"runtime,omitempty" json:"runtime,omitempty" validate:"omitempty,oneof=docker jar"`
 	// AutoPorts replaces every node port that resolves to a default value
 	// (8090, 50051, 18888, …) with a free OS-assigned port. This lets
@@ -26,11 +26,11 @@ type Target struct {
 // NodeSpec defines a single node's desired configuration.
 type NodeSpec struct {
 	Type           string      `yaml:"type" json:"type" validate:"required,oneof=fullnode witness solidity lite"`
-	Version        string      `yaml:"version,omitempty" json:"version,omitempty"`
-	Image          string      `yaml:"image,omitempty" json:"image,omitempty"`
-	InstallPath    string      `yaml:"install_path,omitempty" json:"install_path,omitempty"`
+	Version        string      `yaml:"version,omitempty" json:"version,omitempty" validate:"omitempty,safe_string"`
+	Image          string      `yaml:"image,omitempty" json:"image,omitempty" validate:"omitempty,safe_string"`
+	InstallPath    string      `yaml:"install_path,omitempty" json:"install_path,omitempty" validate:"omitempty,safe_string"`
 	ProcessManager string      `yaml:"process_manager,omitempty" json:"process_manager,omitempty" validate:"omitempty,oneof=systemd nohup"`
-	SystemUser     string      `yaml:"system_user,omitempty" json:"system_user,omitempty"`
+	SystemUser     string      `yaml:"system_user,omitempty" json:"system_user,omitempty" validate:"omitempty,safe_string"`
 	WitnessKeyEnv  string      `yaml:"witness_key_env,omitempty" json:"witness_key_env,omitempty"`
 	Features       Features    `yaml:"features,omitempty" json:"features,omitempty"`
 	Resources      Resources   `yaml:"resources,omitempty" json:"resources,omitempty"`
@@ -136,13 +136,15 @@ type NodeSpec struct {
 
 // JarSource tells trond where (and how) to fetch the java-tron jar for a
 // jar-runtime deployment.
+//
+// SECURITY: when URL is set, SHA256 is mandatory and must be a 64-char
+// lowercase hex digest. We also reject anything but `https://` schemes
+// — without TLS + integrity, an attacker on any network hop (or a typo
+// pointing at a hostile mirror) can drop a malicious jar into the
+// systemd ExecStart and gain `system_user`-as-root code execution.
 type JarSource struct {
-	// URL is the download location. https URLs only (we don't want to
-	// install jars over plaintext http even on a private network).
-	URL string `yaml:"url" json:"url" validate:"omitempty,url"`
-	// SHA256 is the lowercase hex digest. Empty means "skip integrity
-	// check" — supported but emits a warning.
-	SHA256 string `yaml:"sha256,omitempty" json:"sha256,omitempty"`
+	URL    string `yaml:"url" json:"url" validate:"omitempty,https_url"`
+	SHA256 string `yaml:"sha256,omitempty" json:"sha256,omitempty" validate:"required_with=URL,omitempty,sha256_hex"`
 }
 
 // NetworkOverrides surfaces the typical java-tron networking knobs as

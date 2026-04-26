@@ -5,48 +5,48 @@ import (
 	"strings"
 )
 
-// allowedCommands is the whitelist of commands that trond may execute on remote targets.
-// Any command not in this list is rejected to prevent shell injection via intent fields.
+// allowedCommands is the whitelist of commands trond may execute on remote
+// targets. The list is intentionally narrow: anything trond's lifecycle code
+// genuinely needs, and nothing more. Past expansions (apt-get / yum / dnf /
+// curl / wget / kill / pkill) were dropped because:
+//   - bootstrap is the only legitimate consumer of package managers, and it
+//     can be re-allowed scoped to that one command path if needed
+//   - `trond exec` over SSH executes whichever name the caller passes, so a
+//     wide list effectively grants the SSH user's full authority to anyone
+//     who can run `trond exec` against the node
+//   - curl/wget over SSH would let intent fields drive arbitrary network
+//     egress on the target — out-of-band channel for exfil
+//
+// Values reachable in args (path / port / file content) are still
+// shell-quoted by SSHTarget.Exec.
 var allowedCommands = map[string]bool{
-	// Docker
+	// Container runtime
 	"docker": true,
-	// Systemd
+	// Systemd lifecycle (jar runtime)
 	"systemctl":  true,
 	"journalctl": true,
-	// File operations
+	// Read-only file probes used by diagnose / health / inspect
 	"cat":   true,
-	"mkdir": true,
-	"chmod": true,
-	"chown": true,
-	"rm":    true,
 	"ls":    true,
-	"mv":    true,
-	"cp":    true,
-	"tee":   true,
-	// System info
-	"df":        true,
-	"free":      true,
-	"grep":      true,
-	"uname":     true,
-	"whoami":    true,
-	"id":        true,
-	"which":     true,
-	"java":      true,
-	"curl":      true,
-	"wget":      true,
-	"sha256sum": true,
-	// Process management
-	"kill":  true,
-	"pkill": true,
-	"pgrep": true,
+	"grep":  true,
+	"tail":  true,
+	"df":    true,
+	"free":  true,
+	"uname": true,
+	"id":    true,
+	"which": true,
 	"ps":    true,
-	// Network
-	"ss":      true,
+	"ss":    true,
 	"netstat": true,
-	// Package managers (for bootstrap)
-	"apt-get": true,
-	"yum":     true,
-	"dnf":     true,
+	// File mutation needed by writeRemoteFile / WriteFile path on jar nodes
+	"mkdir":     true,
+	"chmod":     true,
+	"chown":     true,
+	"tee":       true,
+	"rm":        true, // jar runtime cleanup; constrained by quoted args
+	"sha256sum": true, // jar download integrity check
+	// JVM probe (preflight) — does NOT execute arbitrary class paths
+	"java": true,
 }
 
 // ValidateCommand checks if a command is in the SSH whitelist.

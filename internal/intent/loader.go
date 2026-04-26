@@ -2,6 +2,7 @@ package intent
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -10,13 +11,229 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var validate = validator.New()
+var validate = func() *validator.Validate {
+	v := validator.New()
+	// "safe_string" rejects any string that could break out of its
+	// downstream syntax: HOCON line, YAML scalar, systemd directive.
+	// We refuse anything containing \n, \r, or other ASCII control
+	// chars (except \t which is harmless in our renders). This is a
+	// blunt instrument but every field that uses this tag is rendered
+	// either as a YAML scalar, a shell argument, or a systemd value —
+	// none of those have a legitimate use for embedded newlines.
+	_ = v.RegisterValidation("safe_string", func(fl validator.FieldLevel) bool {
+		return !containsControlChars(fl.Field().String())
+	})
+	// "https_url" only accepts https:// URLs (not http, file, ftp, …).
+	// Used for jar download URLs.
+	_ = v.RegisterValidation("https_url", func(fl validator.FieldLevel) bool {
+		s := fl.Field().String()
+		if s == "" {
+			return true
+		}
+		u, err := url.Parse(s)
+		if err != nil {
+			return false
+		}
+		return u.Scheme == "https" && u.Host != ""
+	})
+	// "sha256_hex" matches a 64-char lowercase hex string.
+	_ = v.RegisterValidation("sha256_hex", func(fl validator.FieldLevel) bool {
+		s := fl.Field().String()
+		if s == "" {
+			return true
+		}
+		return sha256HexPattern.MatchString(s)
+	})
+	return v
+}()
+
+// containsControlChars returns true for strings containing newline,
+// carriage return, or any C0/C1 control char (except tab). Used by the
+// "safe_string" validator and applied to every string field that flows
+// into compose YAML / systemd unit / HOCON. This is the SECURITY backbone
+// — without it, an attacker controlling intent.yaml can inject lines into
+// any of those formats.
+func containsControlChars(s string) bool {
+	for _, r := range s {
+		if r == '\t' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// checkSafeStrings walks every map / slice / struct on the node that
+// renders into compose YAML, systemd unit, or HOCON, rejecting any value
+// that contains newlines or control chars. This is the second half of
+// the safe_string contract — struct-tag validation can't reach map values
+// and slice elements, so we do it manually.
+func checkSafeStrings(idx int, n *NodeSpec) error {
+	chk := func(field, val string) error {
+		if containsControlChars(val) {
+			return fmt.Errorf("nodes[%d].%s: contains newline or control char (not allowed; would inject into compose YAML / systemd unit / HOCON)", idx, field)
+		}
+		return nil
+	}
+	for k, v := range n.ExtraEnv {
+		if err := chk("extra_env."+k, k); err != nil {
+			return err
+		}
+		if err := chk("extra_env."+k, v); err != nil {
+			return err
+		}
+	}
+	for i, a := range n.ExtraArgs {
+		if err := chk(fmt.Sprintf("extra_args[%d]", i), a); err != nil {
+			return err
+		}
+	}
+	for k, v := range n.Labels {
+		if err := chk("labels."+k, k); err != nil {
+			return err
+		}
+		if err := chk("labels."+k, v); err != nil {
+			return err
+		}
+	}
+	for k, v := range n.ExtraHosts {
+		if err := chk("extra_hosts."+k, k); err != nil {
+			return err
+		}
+		if err := chk("extra_hosts."+k, v); err != nil {
+			return err
+		}
+	}
+	for i, net := range n.Networks {
+		if err := chk(fmt.Sprintf("networks[%d]", i), net); err != nil {
+			return err
+		}
+	}
+	for i, dep := range n.DependsOn {
+		if err := chk(fmt.Sprintf("depends_on[%d]", i), dep); err != nil {
+			return err
+		}
+	}
+	for i, e := range n.Entrypoint {
+		if err := chk(fmt.Sprintf("entrypoint[%d]", i), e); err != nil {
+			return err
+		}
+	}
+	if err := chk("storage.data", n.Storage.Data); err != nil {
+		return err
+	}
+	if err := chk("storage.logs", n.Storage.Logs); err != nil {
+		return err
+	}
+	if err := chk("storage.path", n.Storage.StoragePath); err != nil {
+		return err
+	}
+	if err := chk("shm_size", n.ShmSize); err != nil {
+		return err
+	}
+	if n.JVM != nil {
+		if err := chk("jvm.heap_max", n.JVM.HeapMax); err != nil {
+			return err
+		}
+		if err := chk("jvm.heap_new", n.JVM.HeapNew); err != nil {
+			return err
+		}
+		if err := chk("jvm.direct_memory", n.JVM.DirectMemory); err != nil {
+			return err
+		}
+	}
+	if err := chk("resources.memory", n.Resources.Memory); err != nil {
+		return err
+	}
+	if err := chk("resources.cpu", n.Resources.CPU); err != nil {
+		return err
+	}
+	if hc := n.Healthcheck; hc != nil {
+		for i, t := range hc.Test {
+			if err := chk(fmt.Sprintf("healthcheck.test[%d]", i), t); err != nil {
+				return err
+			}
+		}
+		if err := chk("healthcheck.interval", hc.Interval); err != nil {
+			return err
+		}
+		if err := chk("healthcheck.timeout", hc.Timeout); err != nil {
+			return err
+		}
+		if err := chk("healthcheck.start_period", hc.StartPeriod); err != nil {
+			return err
+		}
+	}
+	if log := n.Logging; log != nil {
+		if err := chk("logging.driver", log.Driver); err != nil {
+			return err
+		}
+		for k, v := range log.Options {
+			if err := chk("logging.options."+k, k); err != nil {
+				return err
+			}
+			if err := chk("logging.options."+k, v); err != nil {
+				return err
+			}
+		}
+	}
+	if wk := n.WitnessKey; wk != nil {
+		if err := chk("witness_key.account_address", wk.AccountAddress); err != nil {
+			return err
+		}
+		if err := chk("witness_key.keystore_path", wk.KeystorePath); err != nil {
+			return err
+		}
+	}
+	// Network overrides flow straight into HOCON; reject anything fishy.
+	if no := &n.NetworkOverrides; no != nil {
+		if no.Seeds != nil {
+			for i, s := range *no.Seeds {
+				if err := chk(fmt.Sprintf("network_overrides.seeds[%d]", i), s); err != nil {
+					return err
+				}
+			}
+		}
+		if no.ActivePeers != nil {
+			for i, s := range *no.ActivePeers {
+				if err := chk(fmt.Sprintf("network_overrides.active_peers[%d]", i), s); err != nil {
+					return err
+				}
+			}
+		}
+		if no.PassivePeers != nil {
+			for i, s := range *no.PassivePeers {
+				if err := chk(fmt.Sprintf("network_overrides.passive_peers[%d]", i), s); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// config_overrides values are interpolated into HOCON via fmt.%v; the
+	// keys are dotted-key strings that flow verbatim to the left of `=`.
+	for k, v := range n.ConfigOverrides {
+		if err := chk("config_overrides."+k, k); err != nil {
+			return err
+		}
+		if vs, ok := v.(string); ok {
+			if err := chk("config_overrides."+k, vs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 // namePattern enforces DNS-label-safe names: ^[a-z0-9][a-z0-9-]{0,62}$
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // hexPattern detects raw hex keys accidentally placed in witness_key_env.
 var hexPattern = regexp.MustCompile(`^[0-9a-fA-F]{32,}$`)
+
+// sha256HexPattern matches a 64-char lowercase hex digest.
+var sha256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Load reads an intent YAML file, validates it, applies defaults, and returns the parsed Intent.
 func Load(path string) (*Intent, error) {
@@ -73,6 +290,17 @@ func Validate(intent *Intent) error {
 	// Struct validation via tags
 	if err := validate.Struct(intent); err != nil {
 		return fmt.Errorf("intent validation: %w", err)
+	}
+
+	// SECURITY: every free-form string field that flows into compose YAML,
+	// systemd unit, or HOCON gets the same rejection of control chars +
+	// newlines. Without this, an attacker controlling intent.yaml can
+	// inject directives into any of those formats. struct-tag validation
+	// can't recurse into maps and slices, so this pass walks them by hand.
+	for i, n := range intent.Nodes {
+		if err := checkSafeStrings(i, &n); err != nil {
+			return err
+		}
 	}
 
 	// Witness nodes need a key source. Accept either the legacy top-level

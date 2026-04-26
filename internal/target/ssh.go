@@ -338,14 +338,14 @@ func (t *SSHTarget) writeRemoteFile(ctx context.Context, path string, data []byt
 	}
 }
 
-// quoteArgs joins cmd and args with each argument single-quoted so shell
-// metacharacters in user-supplied values cannot break out.
+// quoteArgs joins cmd and args with EVERY token single-quoted so shell
+// metacharacters anywhere in the call cannot break out. We quote `cmd`
+// too — even though every internal call site today passes a single
+// whitelist-validated word, the contract should hold defensively against
+// future callers passing `cmd = "docker --tlscert /tmp/x"` or similar.
 func quoteArgs(cmd string, args []string) string {
-	if len(args) == 0 {
-		return cmd
-	}
 	parts := make([]string, 0, len(args)+1)
-	parts = append(parts, cmd)
+	parts = append(parts, shellQuote(cmd))
 	for _, a := range args {
 		parts = append(parts, shellQuote(a))
 	}

@@ -83,9 +83,23 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 	nodeName := fmt.Sprintf("%s%d", prefix, nextIdx)
 
-	// Resolve target — the intent's target wins; if it doesn't carry runtime
-	// info we default to local docker, matching `network create`.
-	tgt := target.NewLocalTarget()
+	// Resolve target by type. SECURITY: previously this always built a
+	// LocalTarget regardless of intent.target.type, which silently sent
+	// SSH-intended deploys to the local host (and combined with any YAML
+	// injection in the rendered compose, that ran on the operator's
+	// machine instead of the remote target).
+	var tgt target.Target
+	switch parsed.Target.Type {
+	case "ssh":
+		s := target.NewSSHTarget(parsed.Target.Host, parsed.Target.Port,
+			parsed.Target.User, parsed.Target.IdentityFile)
+		if err := s.Connect(); err != nil {
+			return output.NewError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
+		}
+		tgt = s
+	default:
+		tgt = target.NewLocalTarget()
+	}
 	defer func() {
 		if c, ok := any(tgt).(interface{ Close() error }); ok {
 			c.Close()
