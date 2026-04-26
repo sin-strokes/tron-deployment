@@ -111,7 +111,35 @@ func (r *DockerRuntime) Status(ctx context.Context, name string) (*NodeStatus, e
 	return &NodeStatus{Name: name, Status: status}, nil
 }
 
+// Logs streams java-tron's application log out of the container.
+//
+// The official tronprotocol/java-tron image's entrypoint execs ./bin/FullNode
+// directly and FullNode's logback config writes everything to
+// /java-tron/logs/tron.log — almost nothing reaches stdout/stderr. So
+// `docker compose logs` returns empty by default. We tail the file inside
+// the container instead. This also matches what trond's storage volume
+// already persists (so users see the same data either way).
+//
+// docker compose logs is kept as the fallback for the rare case where the
+// log file isn't there yet (very first second of container life, or a
+// non-standard image). On any error from `tail`, we return the docker
+// compose output instead of failing.
 func (r *DockerRuntime) Logs(ctx context.Context, name string, opts LogOpts) (io.ReadCloser, error) {
+	tail := opts.Tail
+	if tail <= 0 {
+		tail = 100
+	}
+	tailArgs := []string{"exec", name, "tail", "-n", fmt.Sprintf("%d", tail)}
+	if opts.Follow {
+		tailArgs = append(tailArgs, "-f")
+	}
+	tailArgs = append(tailArgs, "/java-tron/logs/tron.log")
+
+	if out, err := r.target.Exec(ctx, "docker", tailArgs...); err == nil {
+		return io.NopCloser(bytes.NewReader(out)), nil
+	}
+
+	// Fallback: docker compose logs (covers non-standard images or pre-startup state).
 	composePath := filepath.Join(r.workDir, name, "docker-compose.yaml")
 	args := []string{"compose", "-f", composePath, "-p", name, "logs"}
 	if opts.Tail > 0 {
@@ -120,12 +148,10 @@ func (r *DockerRuntime) Logs(ctx context.Context, name string, opts LogOpts) (io
 	if opts.Follow {
 		args = append(args, "-f")
 	}
-
 	out, err := r.target.Exec(ctx, "docker", args...)
 	if err != nil {
 		return nil, fmt.Errorf("docker compose logs: %w", err)
 	}
-
 	return io.NopCloser(bytes.NewReader(out)), nil
 }
 
