@@ -2,6 +2,17 @@
 
 A command-line tool for deploying, managing, and diagnosing [java-tron](https://github.com/tronprotocol/java-tron) nodes using declarative intent files.
 
+> **Heads-up for prior users of this repository.** Until recently this repo
+> shipped only the three java-tron HOCON templates (`main_net_config.conf`,
+> `test_net_config.conf`, `private_net_config.conf`) for users to copy and
+> edit by hand. Those files are **still here, still authoritative, still
+> synchronised with upstream** (see [Configuration Templates](#configuration-templates)
+> below). What's new is `trond`, a CLI that consumes those same templates
+> and a small declarative `intent.yaml` to render, deploy, and manage nodes
+> end-to-end. If you only need the raw `.conf` files, nothing has changed —
+> they live where they always did. If you want to skip hand-editing them,
+> read on.
+
 ## Features
 
 - **Declarative deployment** -- describe desired state in YAML, `trond` makes it happen
@@ -369,6 +380,41 @@ trond aligns with the official `tronprotocol/java-tron` image (built from
 
 The image's entrypoint (`./bin/docker-entrypoint.sh`) execs
 `./bin/FullNode` with the args trond emits — no `java -jar` workarounds.
+
+## Repository Evolution — From Templates to a CLI
+
+This repository started life as a curated set of HOCON config files for
+java-tron. Operators would `wget` or `git clone` the file matching their
+network and then hand-edit it. That workflow is still supported (see
+[Configuration Templates](#configuration-templates) — the same files
+sit at the repo root and get refreshed from upstream on every release).
+
+What this repo *also* provides now is a small, opinionated CLI that
+removes the hand-editing step. The same templates are embedded in the
+`trond` binary; an `intent.yaml` describes the deviations from the
+default template; `trond config render` produces the final HOCON
+deterministically; `trond apply` deploys it.
+
+| Workflow | Before | Now (optional) |
+|---|---|---|
+| Get a template | `git clone` + open `main_net_config.conf` | `trond config render <intent.yaml>` |
+| Tweak ports / features | Edit the `.conf` directly | Set `ports:` / `features:` in intent |
+| Apply changes to a node | scp + restart by hand | `trond apply --intent <file>` (idempotent) |
+| Multi-node private network | Repeat the above N times | `trond network create --intent <file>` |
+| Look up "what does this HOCON key mean?" | grep / docs / java-tron source | `trond config docs <key>` |
+
+Both flows coexist:
+
+- **Pure template users** can still `cat main_net_config.conf` or `git pull`
+  this repo for the latest mainnet config, ignore `bin/`, and never touch
+  the CLI.
+- **CLI users** never need to edit the `.conf` files directly — `trond`
+  handles rendering, ports, validation, and lifecycle.
+
+The CLI lives under `cmd/` and `internal/`. The original config files
+remain at the repo root. `make sync-templates` re-fetches them from
+upstream into both the root and the CLI's embedded copy so the two stay
+in lockstep.
 
 ## Configuration Templates
 
