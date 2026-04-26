@@ -45,20 +45,34 @@ func allocateFreePorts(intent *Intent) error {
 	}
 	used := make(map[int]bool)
 
+	// pickPort returns a port that is free for BOTH TCP and UDP. The P2P
+	// port needs both (java-tron's discovery is UDP), and docker compose
+	// fails the whole container when either family can't bind. We don't
+	// know up front which port is destined for P2P vs HTTP, so we apply
+	// the strict TCP+UDP test to every allocation — slightly wasteful for
+	// HTTP-only ports, but never wrong.
 	pickPort := func() (int, error) {
 		for attempt := 0; attempt < 32; attempt++ {
 			l, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
-				return 0, fmt.Errorf("listen: %w", err)
+				return 0, fmt.Errorf("listen tcp: %w", err)
 			}
 			port := l.Addr().(*net.TCPAddr).Port
 			l.Close()
-			if !used[port] {
-				used[port] = true
-				return port, nil
+			if used[port] {
+				continue
 			}
+			// Verify the same port is free on UDP. Failure means some
+			// other process holds the udp socket — try another port.
+			udp, uerr := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+			if uerr != nil {
+				continue
+			}
+			udp.Close()
+			used[port] = true
+			return port, nil
 		}
-		return 0, fmt.Errorf("could not find a free port after 32 attempts")
+		return 0, fmt.Errorf("could not find a free TCP+UDP port after 32 attempts")
 	}
 
 	for i := range intent.Nodes {
