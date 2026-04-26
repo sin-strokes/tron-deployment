@@ -57,13 +57,15 @@ container_ip when available, runtime, version, status.`,
 }
 
 var (
-	inspectAll     bool
-	inspectNetwork string
+	inspectAll      bool
+	inspectNetwork  string
+	inspectLabelFlags []string
 )
 
 func init() {
 	inspectCmd.Flags().BoolVar(&inspectAll, "all", false, "Inspect every managed node")
 	inspectCmd.Flags().StringVar(&inspectNetwork, "network", "", "Inspect all nodes whose name starts with <network>-node")
+	inspectCmd.Flags().StringArrayVar(&inspectLabelFlags, "label", nil, "Filter by label (key=value, repeatable; AND semantics)")
 	rootCmd.AddCommand(inspectCmd)
 }
 
@@ -91,6 +93,8 @@ func runInspect(cmd *cobra.Command, args []string) error {
 				nodes = append(nodes, n)
 			}
 		}
+	case len(inspectLabelFlags) > 0:
+		nodes = deployState.Nodes
 	case len(args) == 1:
 		n := store.GetNode(deployState, args[0])
 		if n == nil {
@@ -101,7 +105,20 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		nodes = []state.ManagedNode{*n}
 	default:
 		return output.NewError("VALIDATION_ERROR", output.ExitValidationError,
-			"specify a node name, --network <prefix>, or --all")
+			"specify a node name, --network <prefix>, --all, or --label <k=v>")
+	}
+
+	// Apply --label filter on top of the chosen scope.
+	if filter, ferr := parseLabelFilter(inspectLabelFlags); ferr != nil {
+		return ferr
+	} else if filter != nil {
+		filtered := make([]state.ManagedNode, 0, len(nodes))
+		for i := range nodes {
+			if matchesLabels(&nodes[i], filter) {
+				filtered = append(filtered, nodes[i])
+			}
+		}
+		nodes = filtered
 	}
 
 	manifest := buildManifest(cmd.Context(), nodes)

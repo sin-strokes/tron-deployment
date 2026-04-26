@@ -25,11 +25,24 @@ func init() {
 	renderCmd.Flags().StringVar(&renderOutputDir, "output-dir", "", "Directory to write rendered files (default: stdout)")
 }
 
+// renderedNode is what `config render -o json` emits per node. Field
+// names are stable; consumers can rely on missing strings meaning
+// "not produced for this runtime" (e.g. compose stays empty for jar
+// runtime, systemd stays empty for docker).
+type renderedNode struct {
+	Index    int    `json:"index"`
+	NodeName string `json:"name"`
+	Type     string `json:"type"`
+	HOCON    string `json:"hocon"`
+	Compose  string `json:"compose,omitempty"`
+	Systemd  string `json:"systemd,omitempty"`
+	JVMArgs  string `json:"jvm_args"`
+}
+
 func runRender(cmd *cobra.Command, args []string) error {
 	intentPath := args[0]
 	outputFmt, _ := cmd.Flags().GetString("output")
 
-	_ = outputFmt
 	parsed, err := intent.Load(intentPath)
 	if err != nil {
 		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
@@ -37,6 +50,8 @@ func runRender(cmd *cobra.Command, args []string) error {
 
 	// Find templates directory (relative to binary or working directory)
 	templateDir := findTemplateDir()
+
+	rendered := make([]renderedNode, 0, len(parsed.Nodes))
 
 	for i, node := range parsed.Nodes {
 		// Render HOCON config
@@ -64,25 +79,50 @@ func runRender(cmd *cobra.Command, args []string) error {
 			systemdUnit = render.RenderSystemdUnit(parsed, &node, jvmArgs, "", "")
 		}
 
-		if renderOutputDir != "" {
+		rendered = append(rendered, renderedNode{
+			Index:    i,
+			NodeName: parsed.Name,
+			Type:     node.Type,
+			HOCON:    hocon,
+			Compose:  composeYAML,
+			Systemd:  systemdUnit,
+			JVMArgs:  jvmArgs,
+		})
+
+		if renderOutputDir != "" && outputFmt != "json" {
 			if err := writeRenderedFiles(renderOutputDir, parsed.Name, i, hocon, composeYAML, systemdUnit); err != nil {
 				return err
 			}
-		} else {
-			// Write to stdout
-			if i > 0 {
-				fmt.Println("---")
-			}
-			fmt.Printf("# HOCON Config (node %d: %s)\n", i, node.Type)
-			fmt.Println(hocon)
-			if composeYAML != "" {
-				fmt.Println("# docker-compose.yaml")
-				fmt.Println(composeYAML)
-			}
-			if systemdUnit != "" {
-				fmt.Println("# systemd unit")
-				fmt.Println(systemdUnit)
-			}
+		}
+	}
+
+	if outputFmt == "json" {
+		return output.WriteJSON(os.Stdout, map[string]any{
+			"name":    parsed.Name,
+			"network": parsed.Network,
+			"nodes":   rendered,
+		})
+	}
+
+	if renderOutputDir != "" {
+		// Files already written above; nothing else to print.
+		return nil
+	}
+
+	// Text mode: stream each artifact with banner separators.
+	for _, r := range rendered {
+		if r.Index > 0 {
+			fmt.Println("---")
+		}
+		fmt.Printf("# HOCON Config (node %d: %s)\n", r.Index, r.Type)
+		fmt.Println(r.HOCON)
+		if r.Compose != "" {
+			fmt.Println("# docker-compose.yaml")
+			fmt.Println(r.Compose)
+		}
+		if r.Systemd != "" {
+			fmt.Println("# systemd unit")
+			fmt.Println(r.Systemd)
 		}
 	}
 

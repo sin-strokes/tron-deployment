@@ -191,6 +191,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		LastApplied: time.Now().UTC(),
 		HTTPPort:    node.Ports.HTTP,
 		GRPCPort:    node.Ports.GRPC,
+		Labels:      node.Labels,
 	}
 	if existing != nil {
 		managedNode.PreviousVersion = existing.Version

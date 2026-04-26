@@ -22,6 +22,10 @@ type ManagedNode struct {
 	// fields — callers must fall back to defaults when zero.
 	HTTPPort int `json:"http_port,omitempty"`
 	GRPCPort int `json:"grpc_port,omitempty"`
+	// Labels mirror intent.NodeSpec.Labels and survive across CLI sessions
+	// so test harnesses can filter via `trond list --label key=value`
+	// without touching the original intent file.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // NodeTarget is the target info stored in state (subset of intent.Target).
