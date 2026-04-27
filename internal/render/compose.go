@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -30,9 +31,7 @@ func sortedKeys(m map[string]string) []string {
 // witness_key.keystore_password_env is set.
 func composeEnvLines(node *intent.NodeSpec) []string {
 	env := make(map[string]string, len(node.ExtraEnv)+1)
-	for k, v := range node.ExtraEnv {
-		env[k] = v
-	}
+	maps.Copy(env, node.ExtraEnv)
 	if node.Type == "witness" && node.WitnessKey != nil && node.WitnessKey.KeystorePasswordEnv != "" {
 		passwordEnv := node.WitnessKey.KeystorePasswordEnv
 		env[passwordEnv] = "${" + passwordEnv + "}"

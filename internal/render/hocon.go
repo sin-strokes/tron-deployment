@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
@@ -187,14 +188,12 @@ func hoconValue(v any) string {
 	}
 }
 
-// sortStrings is a thin wrapper kept here so this file doesn't need to
-// import "sort" twice (compose.go has its own).
+// sortStrings is a thin wrapper around sort.Strings so the appendix
+// renderer reads cleanly. (Earlier this file hand-rolled an insertion
+// sort to "avoid importing sort twice"; Go imports are per-file so the
+// rationale was wrong.)
 func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
+	sort.Strings(s)
 }
 
 // applyPortOverrides patches port settings in the HOCON config.

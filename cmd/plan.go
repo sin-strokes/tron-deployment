@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
@@ -179,5 +178,3 @@ func printPlanText(result map[string]any, changes []planChange) {
 	}
 }
 
-// dummy to avoid unused import
-var _ = filepath.Join

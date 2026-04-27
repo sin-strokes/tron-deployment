@@ -224,8 +224,8 @@ func runApply(cmd *cobra.Command, args []string) error {
 		"runtime": runtimeType,
 		"version": node.Version,
 		"endpoints": map[string]string{
-			"http": fmt.Sprintf("http://localhost:%d", node.Ports.HTTP),
-			"grpc": fmt.Sprintf("localhost:%d", node.Ports.GRPC),
+			"http": fmt.Sprintf("http://127.0.0.1:%d", node.Ports.HTTP),
+			"grpc": fmt.Sprintf("127.0.0.1:%d", node.Ports.GRPC),
 		},
 		"duration_ms": duration.Milliseconds(),
 	}
@@ -357,10 +357,7 @@ func detectJDKVersion(ctx context.Context, tgt target.Target) int {
 		rest := s[idx+1:]
 		end := strings.Index(rest, `"`)
 		if end > 0 {
-			ver := rest[:end]
-			if strings.HasPrefix(ver, "1.") {
-				ver = ver[2:]
-			}
+			ver := strings.TrimPrefix(rest[:end], "1.")
 			if dot := strings.Index(ver, "."); dot > 0 {
 				ver = ver[:dot]
 			}

@@ -111,7 +111,7 @@ func runRender(cmd *cobra.Command, args []string) error {
 		})
 
 		if renderOutputDir != "" && outputFmt != "json" {
-			if err := writeRenderedFiles(renderOutputDir, parsed.Name, i, hocon, composeYAML, systemdUnit); err != nil {
+			if err := writeRenderedFiles(renderOutputDir, parsed.Name, hocon, composeYAML, systemdUnit); err != nil {
 				return err
 			}
 		}
@@ -150,7 +150,7 @@ func runRender(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func writeRenderedFiles(dir, name string, nodeIdx int, hocon, compose, systemd string) error {
+func writeRenderedFiles(dir, name string, hocon, compose, systemd string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}

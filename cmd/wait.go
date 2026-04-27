@@ -215,7 +215,7 @@ func jsonPath(data []byte, path string) (any, error) {
 	if err := json.Unmarshal(data, &v); err != nil {
 		return nil, fmt.Errorf("decode json: %w", err)
 	}
-	for _, key := range strings.Split(path, ".") {
+	for key := range strings.SplitSeq(path, ".") {
 		m, ok := v.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("path segment %q applied to non-object", key)

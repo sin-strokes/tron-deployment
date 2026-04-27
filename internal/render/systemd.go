@@ -7,6 +7,21 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 )
 
+// capitalizeASCII upper-cases the first byte of an ASCII string. Used
+// for the systemd Description field where node.Type is one of a few
+// validated lowercase enum values (fullnode, witness, solidity, lite),
+// so this is a much smaller hammer than golang.org/x/text/cases for
+// the strings.Title use this replaces.
+func capitalizeASCII(s string) string {
+	if s == "" {
+		return s
+	}
+	if c := s[0]; c >= 'a' && c <= 'z' {
+		return string(c-32) + s[1:]
+	}
+	return s
+}
+
 // RenderSystemdUnit generates a systemd service unit file from the intent.
 func RenderSystemdUnit(i *intent.Intent, node *intent.NodeSpec, jvmArgs string, jarPath string, configPath string) string {
 	user := node.SystemUser
@@ -58,10 +73,10 @@ func RenderSystemdUnit(i *intent.Intent, node *intent.NodeSpec, jvmArgs string, 
 	unitName := fmt.Sprintf("tron-%s", i.Name)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Managed by trond — do not edit manually\n"))
+	sb.WriteString("# Managed by trond — do not edit manually\n")
 	sb.WriteString(fmt.Sprintf("# Node: %s | Network: %s\n", i.Name, i.Network))
 	sb.WriteString("[Unit]\n")
-	sb.WriteString(fmt.Sprintf("Description=TRON %s Node (%s)\n", strings.Title(node.Type), i.Name))
+	sb.WriteString(fmt.Sprintf("Description=TRON %s Node (%s)\n", capitalizeASCII(node.Type), i.Name))
 	sb.WriteString("After=network-online.target\n")
 	sb.WriteString("Wants=network-online.target\n")
 	sb.WriteString("\n")
@@ -71,7 +86,8 @@ func RenderSystemdUnit(i *intent.Intent, node *intent.NodeSpec, jvmArgs string, 
 	sb.WriteString(fmt.Sprintf("WorkingDirectory=%s\n", installPath))
 	sb.WriteString(fmt.Sprintf("ExecStart=%s\n", execStart))
 	for _, env := range envLines {
-		sb.WriteString(fmt.Sprintf("%s\n", env))
+		sb.WriteString(env)
+		sb.WriteString("\n")
 	}
 	// Map docker-compose restart names to systemd. unless-stopped maps to
 	// "always" because systemd has no built-in equivalent that preserves

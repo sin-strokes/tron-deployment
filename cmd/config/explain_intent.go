@@ -189,7 +189,7 @@ func explainPorts(w io.Writer, raw, final *intent.NodeSpec) {
 	}
 }
 
-func explainStorage(w io.Writer, raw, final *intent.NodeSpec) {
+func explainStorage(w io.Writer, _, final *intent.NodeSpec) {
 	s := final.Storage
 	switch {
 	case s.StoragePath != "":
@@ -204,10 +204,9 @@ func explainStorage(w io.Writer, raw, final *intent.NodeSpec) {
 	default:
 		row(w, "·", "storage", "default (named volumes <name>-data / <name>-logs)", false)
 	}
-	_ = raw
 }
 
-func explainFeatures(w io.Writer, raw, final *intent.NodeSpec) {
+func explainFeatures(w io.Writer, _, final *intent.NodeSpec) {
 	pairs := []struct {
 		name  string
 		value *bool
@@ -224,10 +223,9 @@ func explainFeatures(w io.Writer, raw, final *intent.NodeSpec) {
 			row(w, "✓", p.name, boolStr(*p.value), false)
 		}
 	}
-	_ = raw
 }
 
-func explainNetworkOverrides(w io.Writer, raw, final *intent.NodeSpec) {
+func explainNetworkOverrides(w io.Writer, _, final *intent.NodeSpec) {
 	o := final.NetworkOverrides
 	if o.Seeds != nil {
 		row(w, "✓", "network_overrides.seeds", fmt.Sprintf("%d seed(s) → seed.node.ip.list", len(*o.Seeds)), false)
@@ -255,7 +253,6 @@ func explainNetworkOverrides(w io.Writer, raw, final *intent.NodeSpec) {
 	if o.MaxActiveSameIP != nil {
 		row(w, "✓", "network_overrides.max_active_same_ip", intToStr(*o.MaxActiveSameIP), false)
 	}
-	_ = raw
 }
 
 func row(w io.Writer, icon, name, value string, isDefault bool) {

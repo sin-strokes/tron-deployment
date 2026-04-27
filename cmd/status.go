@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"time"
 
@@ -81,10 +82,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if node.Status == "running" {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Second)
 		defer cancel()
-		live := liveStatusProbe(ctx, node)
-		for k, v := range live {
-			statusInfo[k] = v
-		}
+		maps.Copy(statusInfo, liveStatusProbe(ctx, node))
 	}
 
 	if outputFmt == "json" {

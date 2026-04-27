@@ -40,7 +40,7 @@ func init() {
 				return output.NewError("VALIDATION_ERROR", output.ExitValidationError,
 					"--install needs exactly one shell argument: bash | zsh | fish | powershell")
 			}
-			return installCompletion(cmd, args[0])
+			return installCompletion(args[0])
 		}
 		break
 	}
@@ -49,7 +49,7 @@ func init() {
 // installCompletion writes the generated completion script to the
 // well-known location for the user's shell. We only target the user
 // scope (no /etc/* writes) so installation never needs sudo.
-func installCompletion(cmd *cobra.Command, shell string) error {
+func installCompletion(shell string) error {
 	dest, err := completionDest(shell)
 	if err != nil {
 		return err

@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -213,6 +212,3 @@ func checkUpdate(ctx context.Context) doctorCheck {
 		Message: "up to date (" + latest + ")"}
 }
 
-// _ catches the unused http import when --check-update is the only consumer
-// in some build scenarios; keeps refactors safe.
-var _ = http.StatusOK

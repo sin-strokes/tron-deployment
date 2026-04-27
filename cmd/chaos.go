@@ -240,9 +240,9 @@ func chaosGroups(ctx context.Context, op, spec string) error {
 // around commas and pipes is trimmed.
 func parseGroups(spec string) [][]string {
 	var out [][]string
-	for _, g := range strings.Split(spec, "|") {
+	for g := range strings.SplitSeq(spec, "|") {
 		var members []string
-		for _, m := range strings.Split(g, ",") {
+		for m := range strings.SplitSeq(g, ",") {
 			m = strings.TrimSpace(m)
 			if m != "" {
 				members = append(members, m)

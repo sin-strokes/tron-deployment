@@ -101,7 +101,7 @@ func (t *LocalTarget) MemTotal(ctx context.Context) (uint64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("read meminfo: %w", err)
 		}
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			if strings.HasPrefix(line, "MemTotal:") {
 				fields := strings.Fields(line)
 				if len(fields) < 2 {
