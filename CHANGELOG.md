@@ -8,21 +8,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `trond doctor` — environment self-check (state integrity, lock health, version drift)
-- `trond completion --install` — convenience installer for shell completions
+- `trond doctor` — environment self-check (state, lock, docker CLI,
+  version drift via `--check-update`)
+- `trond version --check-update` — query GitHub releases, compare to
+  the local build
+- `trond completion --install` — drop the script in the per-shell
+  standard location
 - `config render --node N` — render only one node from a multi-node intent
-- `--overlay <path>` — second intent file merged on top of the primary one
-- README: "Repository Evolution" section explaining the move from
-  hand-edited templates to declarative CLI
+- `config render --overlay <path>` — second intent merged on top
+- `config render -o json` — structured payload (hocon, compose, systemd,
+  jvm_args per node)
+- `config validate --explain` — per-field breakdown of explicit vs
+  default values, with derived JVM heap shown
+- `list --label k=v` and `inspect --label k=v` — repeatable AND filters
+  scoped to docker labels persisted in state
+- `nodes[].jar.{url,sha256}` — declarative jar download, https-only,
+  SHA256 mandatory when url is set
+- README: "Repository Evolution" + "Intent Reference" sections, install
+  one-liner, brew/deb/rpm/docker routes, shell completion section,
+  Chinese mirror in `README_CN.md`
+- `LICENSE` (MIT), `CHANGELOG.md`, `CONTRIBUTING.md`,
+  `.github/{ISSUE_TEMPLATE,PULL_REQUEST_TEMPLATE}.md`,
+  `.github/dependabot.yml`
+- `cmd/gendoc` — emits man(1) pages and per-command markdown
+- `scripts/install.sh` — single-shot installer with SHA256 verification
+- `Dockerfile.release` — slim alpine image with `tronprotocol/trond`
 
 ### Changed
-- `goreleaser` now produces homebrew tap, .deb, .rpm, and a docker image in
-  addition to the existing tar.gz archives
-- CI matrix expanded: `lint`, `test+coverage`, and `govulncheck` jobs run on
-  every PR alongside the existing e2e suite
+- `goreleaser` now produces a homebrew tap, .deb / .rpm / .apk, and
+  multi-arch docker image alongside tar.gz archives; release notes
+  group commits by feat/fix
+- CI matrix expanded: `lint`, `test+coverage`, `govulncheck`, and
+  cross-compile jobs run on every PR; e2e is its own workflow with
+  the heavier schedule
+- `config explain` renamed to `config docs`; `explain` kept as alias
+- `auto_ports` now verifies TCP+UDP availability before allocating
+  (fixes P2P UDP-only collisions on macOS Docker)
+- `network destroy` resolves target per-node from state (was hard-coded
+  LocalTarget — SSH-deployed networks would leak containers)
+- `network add` persists the full target (Host/User/Port/IdentityFile/
+  InstallPath/Labels) so subsequent commands can rebuild the SSH
+  connection
+- `apply` short-circuits on hash match regardless of node status (was
+  forcing HUMAN_REQUIRED on a stopped node with an unchanged intent)
+- jar runtime `Remove(purge=true)` actually wipes the install dir
+  (was a documented TODO before); refuses `/` and empty paths
 
 ### Fixed
-- (none yet)
+- Witness private key inlined into rendered HOCON — typesafe-config does
+  not perform `${ENV}` substitution, the literal `${SR_KEY}` was being
+  read as a 9-char witness key and the SR shut down with WITNESS_INIT(1)
+- Compose render aligned with the official tronprotocol/java-tron image:
+  `/java-tron/conf`, `/java-tron/output-directory`, `/java-tron/logs`,
+  `-jvm` arg, P2P UDP exposed. Containers no longer crash-loop
+- `network create` auto-wires `node.active` between siblings so peering
+  works when `auto_ports` randomizes the inside-container P2P port
+- `network destroy --confirm=typo` now refuses with NETWORK_NOT_FOUND
+  (previously silently succeeded with `removed: null`)
+- `port_listening` checker uses net.Dial instead of `ss -tlnp` (works
+  on macOS where ss isn't available)
+- `trond logs` reads `/java-tron/logs/tron.log` (java-tron writes to
+  file, not stdout — `docker compose logs` was empty)
+- `state.NodeTarget` persists `IdentityFile` (lifecycle commands lost
+  the SSH key after apply)
+
+### Security
+- Reject control characters (`\n`, `\r`, …) in every free-form intent
+  field; struct-tag `safe_string` + manual map/slice walk close compose
+  YAML and systemd unit injection vectors
+- `nodes[].jar.url` rejects http/file/ftp; SHA256 required when URL set
+- SSH command whitelist trimmed to lifecycle minimum (drop apt-get / yum
+  / dnf / curl / wget / kill / pkill / chown / cp / mv); `quoteArgs`
+  now also shellQuotes the cmd token defensively
+- SSH host-key verification distinguishes new host (eligible for opt-in
+  TOFU via `TROND_SSH_ACCEPT_NEW_HOSTS=1`) from pinned-key MISMATCH
+  (always rejected, even with TOFU)
+- `network add` now honors target.type instead of hard-coding
+  LocalTarget (an SSH intent would otherwise deploy on the operator's
+  local host)
+
+## [0.1.0-alpha] — 2026-XX-XX
 
 ## [0.1.0-alpha] — 2026-XX-XX
 

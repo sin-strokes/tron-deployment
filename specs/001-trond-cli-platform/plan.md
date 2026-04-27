@@ -17,7 +17,7 @@ abstractions, plan/apply semantics, and structured diagnosis.
 
 ## Technical Context
 
-**Language/Version**: Go 1.23+ (matching tron-docker trond's go.mod)
+**Language/Version**: Go 1.25+ (validator/v10 dependency requires it)
 **Primary Dependencies**:
 - `github.com/spf13/cobra` v1.9+ — CLI framework (already in tron-docker trond)
 - `github.com/spf13/viper` — config management (already imported)

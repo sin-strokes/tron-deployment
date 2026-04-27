@@ -5,7 +5,7 @@
 
 ## Prerequisites
 
-- Go 1.23+ (for building from source)
+- Go 1.25+ (for building from source)
 - Docker Engine 20.10+ and Compose V2 (for docker runtime)
 - OR JDK 8+/17+ and systemd (for jar runtime)
 

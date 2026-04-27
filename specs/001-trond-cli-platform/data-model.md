@@ -65,14 +65,35 @@ The declarative file describing desired node state. Written by users or AI agent
 | jsonrpc | bool | false | Enable Ethereum-compatible JSON-RPC |
 | rate_limit | bool | true | Enable API rate limiting |
 | event_subscribe | bool | false | Enable event subscription system |
-| pbft | bool | false | Enable PBFT consensus endpoints |
+
+> Earlier drafts listed a `pbft` toggle. PBFT consensus is governed by an
+> on-chain proposal (`committee.allowPBFT`, not active on mainnet); a
+> separate transport-layer PBFT messaging is already configured by the
+> upstream template. The intent flag was a no-op and has been removed.
 
 ### Resources
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| memory | string | 16GB | Container memory limit or JVM hint |
-| storage | string | — | Informational; used by preflight check |
+| memory | string | 16GB | Container memory limit + JVM heap input |
+| cpu    | string | —     | docker-compose `deploy.resources.limits.cpus` |
+
+### Storage (separate from Resources)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| data | string | `<name>-data` (named volume) | Source for `/java-tron/output-directory`. Absolute path → bind mount; bare name → docker named volume. |
+| logs | string | `<name>-logs` (named volume) | Source for `/java-tron/logs`. |
+| path | string | — | Single host root; data and logs auto-derive as `<path>/data` and `<path>/logs`. |
+
+### Other NodeSpec fields (added post-MVP)
+
+For the full surface — `restart`, `extra_env`, `extra_args`, `labels`,
+`network_overrides`, `witness_key`, `config_overrides`, `networks`,
+`depends_on`, `healthcheck`, `ulimits`, `extra_hosts`, `entrypoint`,
+`logging`, `shm_size`, `jar` — see `schemas/intent.schema.json` (the
+JSON Schema is the authoritative reference) and the README "Intent
+Reference" section.
 
 ### JVMConfig (optional overrides)
 

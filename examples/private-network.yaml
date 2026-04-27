@@ -11,7 +11,8 @@ network: private
 nodes:
   - type: witness
     version: latest
-    witness_key_env: SR_PRIVATE_KEY
+    witness_key:
+      private_key_env: SR_PRIVATE_KEY
     features:
       metrics: true
     resources:

@@ -96,7 +96,7 @@ The JVM itself crashes (segfault, internal error).
 **Symptoms**: `hs_err_pid*.log` file created in the working directory.
 
 **Causes and fixes**:
-- **Incompatible JDK version**: java-tron requires JDK 8 (Oracle or OpenJDK). JDK 11+ is not officially supported for all versions.
+- **Incompatible JDK version**: recent java-tron releases (4.7+) target JDK 17 (OpenJDK). The official tronprotocol/java-tron container image bundles JDK 17. Older 4.x lines may still expect JDK 8 — match the image.
 - **Native memory exhaustion**: Check ulimits (`ulimit -a`), especially `max memory size` and `open files`.
 - **Hardware fault**: Run `memtest86` if crashes are random.
 

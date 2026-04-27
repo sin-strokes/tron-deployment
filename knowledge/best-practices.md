@@ -14,12 +14,18 @@
 
 ### Memory Sizing
 
-| Host RAM | Recommended -Xmx | -Xms | Notes |
-|---|---|---|---|
-| 16 GB | 10g | 10g | Lite FullNode only |
-| 32 GB | 24g | 24g | Standard FullNode |
-| 48 GB | 36g | 36g | Recommended FullNode |
-| 64 GB | 48g | 48g | Witness / high-traffic API |
+trond's auto-tuning (`render.JVMArgs`) picks heap by host memory:
+
+| Host RAM | trond -Xmx | Notes |
+|---|---|---|
+| 8 GB  | 4g  | Lite FullNode only |
+| 16 GB | 8g  | Lite or low-traffic FullNode |
+| 32 GB | 14g | Standard FullNode |
+| 64 GB | 24g | Witness / high-traffic API |
+
+Override via `jvm.heap_max:` in intent if you want tighter manual control
+(e.g. for witness nodes operators historically size heap to 75% of RAM).
+trond always sets `-Xms == -Xmx` to avoid heap resize stalls.
 
 Always set `-Xms` equal to `-Xmx` to avoid heap resizing overhead.
 

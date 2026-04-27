@@ -73,21 +73,58 @@ trond health my-node
 trond diagnose my-node
 ```
 
-## 命令速览（共 32 条）
+## 命令速览（共 33 条）
 
 | 类别 | 命令 |
 |---|---|
 | **生命周期** | `apply`/`deploy` · `plan` · `stop` · `start` · `restart` · `remove` · `upgrade` · `rollback` |
-| **配置** | `config validate` · `config render` · `config diff` · `config docs` |
-| **观测** | `status` · `list` · `logs` · `health` · `diagnose` · `verify` · `inspect` · `events` |
+| **配置** | `config validate [--explain]` · `config render [--node N] [--overlay path] [-o json]` · `config diff` · `config docs` |
+| **观测** | `status` · `list [--label k=v]` · `logs` · `health` · `diagnose` · `verify` · `inspect [--label k=v]` · `events` |
 | **测试 SDK** | `exec` · `files put`/`files get` · `wait` |
 | **混沌** | `disconnect` · `connect` · `partition` · `heal` |
 | **网络** | `network create` · `network add` · `network status` · `network destroy` |
 | **环境** | `preflight` · `bootstrap` |
 | **知识库** | `knowledge` |
-| **工具** | `doctor` · `version` · `completion` |
+| **工具** | `doctor [--check-update]` · `version [--check-update]` · `completion [--install]` |
 
-完整字段说明见英文版 README 的 "Intent Reference" 章节。
+## 主要 intent 字段
+
+参考英文 README 的 "Intent Reference" 完整列表。常用：
+
+- **基础**：`name` / `network` (`mainnet`/`nile`/`private`) / `target.{type,host,user,runtime,auto_ports}`
+- **节点**：`type` (`fullnode`/`witness`/`solidity`/`lite`) / `version` / `image`
+- **资源**：`resources.{memory,cpu}` / `storage.{data,logs,path}`
+- **生命周期**：`restart` / `extra_env` / `extra_args` / `labels`
+- **JVM**：`jvm.{heap_max,heap_new,direct_memory,gc,gc_log}`
+- **网络（HOCON 覆盖）**：`network_overrides.{seeds,active_peers,passive_peers,p2p_version,discovery,max_connections,max_active_same_ip,need_sync_check}`
+- **Witness**：`witness_key.{private_key_env,keystore_path,keystore_password_env,account_address}`
+- **HOCON 兜底**：`config_overrides` 任意 dotted-key
+- **Compose 专属**：`networks` / `depends_on` / `healthcheck` / `ulimits` / `extra_hosts` / `entrypoint` / `logging` / `shm_size`
+- **Jar 部署**：`jar.{url,sha256}`（仅 https，sha256 必填）
+
+## 全局环境变量
+
+- `TROND_STATE_DIR` —— 重定位 state.json / audit.log / deployments/（并发 enclave 必需）
+- `TROND_TEMPLATES_DIR` —— 覆盖 embedded HOCON 模板
+- `TROND_SSH_ACCEPT_NEW_HOSTS=1` —— SSH host-key TOFU（key 不匹配 pinned 时**永远**拒绝，即便开了这个变量）
+
+## 退出码
+
+| 码 | 含义 |
+|---|---|
+| 0 | 成功 |
+| 1 | 一般错误（WAIT_TIMEOUT / EXEC_ERROR / NODE_NOT_FOUND 等）|
+| 2 | 验证错误（intent.yaml 不合法，含 control char 注入拦截）|
+| 3 | 目标不可达（SSH/Docker 连不上）|
+| 4 | 预检失败 |
+| 10 | HUMAN_REQUIRED（破坏性操作需要 confirm，或 apply 改了 intent 缺 --auto-approve）|
+
+## 安全性
+
+- 每个 free-form intent 字段都拒绝换行/控制字符 —— 堵住 compose YAML / systemd unit 注入
+- `jar.url` 仅支持 https，`sha256` 必填
+- SSH 命令白名单收紧（移除 apt/yum/curl/wget/kill 等）
+- witness 私钥 inline 进 HOCON，不通过容器 env 传递（typesafe-config 不做 ${ENV} 替换）
 
 ## 私有网络快速部署
 

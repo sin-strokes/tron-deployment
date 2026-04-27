@@ -60,6 +60,11 @@
           "type": "string",
           "enum": ["docker", "jar"],
           "default": "docker"
+        },
+        "auto_ports": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, replace every default port with a free OS-allocated port. Essential for parallel test enclaves."
         }
       },
       "if": {
@@ -153,7 +158,8 @@
         "extra_hosts": { "type": "object", "additionalProperties": { "type": "string" } },
         "entrypoint": { "type": "array", "items": { "type": "string" } },
         "logging": { "$ref": "#/$defs/Logging" },
-        "shm_size": { "type": "string" }
+        "shm_size": { "type": "string" },
+        "jar": { "$ref": "#/$defs/JarSource" }
       },
       "if": {
         "properties": { "type": { "const": "witness" } }
@@ -216,6 +222,25 @@
         "options": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     },
+    "JarSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where to fetch the FullNode.jar for jar-runtime targets. trond rejects http/file/ftp; sha256 is mandatory whenever url is set.",
+      "required": ["url", "sha256"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "description": "https URL to the jar (http/file/ftp rejected)"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Lowercase 64-char hex SHA256 digest"
+        }
+      }
+    },
     "Features": {
       "type": "object",
       "additionalProperties": false,
@@ -252,7 +277,7 @@
         "heap_new": { "type": "string" },
         "direct_memory": { "type": "string" },
         "gc": { "type": "string", "enum": ["G1", "CMS", "auto"], "default": "auto" },
-        "gc_log": { "type": "boolean", "default": true }
+        "gc_log": { "type": "boolean", "default": false, "description": "Opt-in. Default off so the upstream image's start.sh decides." }
       }
     },
     "PortMapping": {
