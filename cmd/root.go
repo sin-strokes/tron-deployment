@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	configCmd "github.com/tronprotocol/tron-deployment/cmd/config"
 	networkCmd "github.com/tronprotocol/tron-deployment/cmd/network"
+	snapshotCmd "github.com/tronprotocol/tron-deployment/cmd/snapshot"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 )
@@ -57,6 +58,7 @@ for CI pipelines and AI agents.`,
 func init() {
 	rootCmd.AddCommand(configCmd.Cmd)
 	rootCmd.AddCommand(networkCmd.Cmd)
+	rootCmd.AddCommand(snapshotCmd.Cmd)
 
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "text", "Output format: text, json")
 	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "text", "Log format: text, json")
