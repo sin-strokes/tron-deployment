@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
@@ -158,12 +161,17 @@ func checkMemory(cmd *cobra.Command, tgt target.Target, parsed *intent.Intent) c
 		return checkResult{Name: "memory", Status: "warning", Message: "Could not check memory"}
 	}
 	memGB := mem / (1024 * 1024 * 1024)
-	minGB := uint64(16)
+	// Take the largest memory requirement across all nodes in the intent.
+	// Previously this loop was a no-op (`break` after first non-empty),
+	// so the threshold stayed at the hardcoded 16 GB regardless of intent.
+	minGB := uint64(0)
 	for _, node := range parsed.Nodes {
-		if node.Resources.Memory != "" {
-			// Parse memory requirement from intent
-			break
+		if g := uint64(render.ParseMemoryGB(node.Resources.Memory)); g > minGB {
+			minGB = g
 		}
+	}
+	if minGB == 0 {
+		minGB = 16 // safe default when no node requested any memory
 	}
 	if memGB < minGB {
 		return checkResult{Name: "memory", Status: "fail",
@@ -173,7 +181,12 @@ func checkMemory(cmd *cobra.Command, tgt target.Target, parsed *intent.Intent) c
 		Message: fmt.Sprintf("%dGB total", memGB)}
 }
 
-func checkPorts(cmd *cobra.Command, tgt target.Target, node *intent.NodeSpec) []checkResult {
+// checkPorts probes every well-known port the intent will expose.
+// Earlier this shelled out to `ss -tlnp` which doesn't exist on macOS,
+// so the check silently reported every port as available. Use net.Dial
+// instead — same behaviour as the diagnose port_listening checker, no
+// runtime dependency.
+func checkPorts(_ *cobra.Command, _ target.Target, node *intent.NodeSpec) []checkResult {
 	ports := []struct {
 		name string
 		port int
@@ -183,15 +196,15 @@ func checkPorts(cmd *cobra.Command, tgt target.Target, node *intent.NodeSpec) []
 		{"p2p", node.Ports.P2P},
 	}
 
+	dialer := net.Dialer{Timeout: 1500 * time.Millisecond}
 	var results []checkResult
 	for _, p := range ports {
 		if p.port == 0 {
 			continue
 		}
-		// Check if port is in use via ss/netstat
-		out, _ := tgt.Exec(cmd.Context(), "ss", "-tlnp")
-		portStr := fmt.Sprintf(":%d ", p.port)
-		if strings.Contains(string(out), portStr) {
+		conn, err := dialer.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", p.port))
+		if err == nil {
+			_ = conn.Close()
 			results = append(results, checkResult{
 				Name:    fmt.Sprintf("port-%d", p.port),
 				Status:  "fail",

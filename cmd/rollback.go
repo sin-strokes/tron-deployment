@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -39,8 +40,13 @@ func runRollback(cmd *cobra.Command, args []string) error {
 	currentVersion := nc.Node.Version
 	targetVersion := nc.Node.PreviousVersion
 
-	// Stop current
-	nc.Runtime.Stop(cmd.Context(), name)
+	// Stop current. A stop failure is surfaced as a warning rather than
+	// a hard error — the node may already be down (which is the common
+	// case when the operator runs rollback after a crash), but a
+	// genuinely stuck process should not be hidden either.
+	if err := nc.Runtime.Stop(cmd.Context(), name); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: stop %s before rollback failed: %v\n", name, err)
+	}
 
 	// Restore previous version
 	nc.Node.Version = targetVersion

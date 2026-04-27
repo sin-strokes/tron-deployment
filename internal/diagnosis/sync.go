@@ -43,10 +43,14 @@ func (c *SyncChecker) Run(ctx context.Context, tgt target.Target, opts CheckOpts
 	}
 
 	if err := json.Unmarshal(out, &block); err != nil {
+		// Cap the snippet against the trimmed length, not the raw length —
+		// "   " is 3 bytes raw but trims to 0 and would panic on a [:3]
+		// slice of the empty trimmed string.
+		trimmed := strings.TrimSpace(string(out))
 		return CheckResult{
 			Name:    c.Name(),
 			Status:  StatusWarning,
-			Message: "Could not parse block response: " + strings.TrimSpace(string(out))[:min(100, len(out))],
+			Message: "Could not parse block response: " + trimmed[:min(100, len(trimmed))],
 		}
 	}
 

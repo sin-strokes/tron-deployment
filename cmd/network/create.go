@@ -33,10 +33,8 @@ func init() {
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
-	outputFmt, _ := cmd.Flags().GetString("output")
 	start := time.Now()
 
-	_ = outputFmt // reserved for future format-specific output
 	parsed, err := intent.Load(createIntentPath)
 	if err != nil {
 		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
@@ -59,8 +57,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	templateDir := findTemplatesDir()
 	workDir := paths.Deployments()
 
-	store, _ := state.NewStore(paths.State())
-	deployState, _ := store.Load()
+	store, err := state.NewStore(paths.State())
+	if err != nil {
+		return output.NewError("STATE_ERROR", output.ExitGeneralError, err.Error())
+	}
+	deployState, err := store.Load()
+	if err != nil {
+		return output.NewError("STATE_ERROR", output.ExitGeneralError, err.Error())
+	}
 
 	// Auto-wire peering between siblings before rendering. After
 	// intent.Load() ports are final (defaults applied, auto_ports
@@ -137,8 +141,17 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	store.Save(deployState)
-	writeAudit(auditEvent{Command: "network-create", Node: parsed.Name, Target: "local", Result: "success", Start: start})
+	if err := store.Save(deployState); err != nil {
+		return output.NewError("STATE_ERROR", output.ExitGeneralError,
+			"failed to persist state: "+err.Error())
+	}
+	writeAudit(auditEvent{
+		Command: "network-create",
+		Node:    parsed.Name,
+		Target:  parsed.Target.Type,
+		Result:  "success",
+		Start:   start,
+	})
 
 	result := map[string]any{
 		"network": parsed.Name,

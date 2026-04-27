@@ -13,7 +13,8 @@ import (
 
 // JarRuntime manages nodes via direct jar execution + systemd.
 type JarRuntime struct {
-	target target.Target
+	target           target.Target
+	purgeInstallPath string // set by SetPurgeInstallPath; empty means "skip purge"
 }
 
 // NewJarRuntime creates a JarRuntime with the given target.
@@ -90,30 +91,62 @@ func (r *JarRuntime) Stop(ctx context.Context, name string) error {
 	return err
 }
 
+// Remove tears down a jar-runtime node: stops + disables the service,
+// removes the unit file and any drop-in overrides, reloads systemd, and
+// (when purge is set) wipes the install directory.
+//
+// Failures of stop/disable are best-effort — the node may already be
+// down — but failures to remove the unit file or to reload systemd are
+// surfaced because they leave the system in a partially-removed state.
+//
+// The caller passes installPath via DeployOpts.JarPath (its parent dir)
+// for purge to delete; a previous version of this method silently
+// dropped purge with a TODO.
 func (r *JarRuntime) Remove(ctx context.Context, name string, purge bool) error {
 	unitName := fmt.Sprintf("tron-%s.service", name)
 
-	// Stop and disable
-	r.target.Exec(ctx, "systemctl", "stop", unitName)
-	r.target.Exec(ctx, "systemctl", "disable", unitName)
+	// Best-effort stop + disable. Both can legitimately fail if the
+	// service is already in that state.
+	_, _ = r.target.Exec(ctx, "systemctl", "stop", unitName)
+	_, _ = r.target.Exec(ctx, "systemctl", "disable", unitName)
 
-	// Remove unit file
 	unitPath := filepath.Join("/etc/systemd/system", unitName)
-	r.target.Exec(ctx, "rm", "-f", unitPath)
+	if _, err := r.target.Exec(ctx, "rm", "-f", unitPath); err != nil {
+		return fmt.Errorf("remove unit file %s: %w", unitPath, err)
+	}
 
-	// Remove override directory
 	overridePath := fmt.Sprintf("/etc/systemd/system/%s.d", unitName)
-	r.target.Exec(ctx, "rm", "-rf", overridePath)
+	if _, err := r.target.Exec(ctx, "rm", "-rf", overridePath); err != nil {
+		return fmt.Errorf("remove override dir %s: %w", overridePath, err)
+	}
 
-	// Reload
-	r.target.Exec(ctx, "systemctl", "daemon-reload")
+	if _, err := r.target.Exec(ctx, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("daemon-reload after remove: %w", err)
+	}
 
-	if purge {
-		// Remove installation directory — will be determined from state
-		// For now, we can't purge without knowing the install path
+	if purge && r.purgeInstallPath != "" {
+		// rm -rf the install root. Refuse "/" or "" out of paranoia —
+		// callers always derive this from intent.install_path which
+		// defaults to /opt/tron, but a misconfigured intent shouldn't
+		// nuke the host.
+		p := r.purgeInstallPath
+		if p == "/" || p == "" {
+			return fmt.Errorf("refusing to purge install_path %q", p)
+		}
+		if _, err := r.target.Exec(ctx, "rm", "-rf", p); err != nil {
+			return fmt.Errorf("purge install dir %s: %w", p, err)
+		}
 	}
 
 	return nil
+}
+
+// SetPurgeInstallPath records the install root that Remove(purge=true)
+// should wipe. Callers that have access to the managed-node state set
+// this before invoking Remove; absent it, purge is a no-op (preferable
+// to guessing).
+func (r *JarRuntime) SetPurgeInstallPath(p string) {
+	r.purgeInstallPath = p
 }
 
 func (r *JarRuntime) Status(ctx context.Context, name string) (*NodeStatus, error) {

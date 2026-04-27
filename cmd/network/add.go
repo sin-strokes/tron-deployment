@@ -130,22 +130,35 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	store.UpsertNode(deployState, state.ManagedNode{
-		Name:        nodeName,
-		Version:     node.Version,
-		Target:      state.NodeTarget{Type: parsed.Target.Type},
+		Name:    nodeName,
+		Version: node.Version,
+		// Persist the FULL target so subsequent stop/start/files/inspect
+		// can rebuild the SSH connection. Earlier this only stored
+		// Type, leaving Host/User/Port/IdentityFile blank — which then
+		// silently fell through to LocalTarget on follow-up commands.
+		Target: state.NodeTarget{
+			Type:         parsed.Target.Type,
+			Host:         parsed.Target.Host,
+			User:         parsed.Target.User,
+			Port:         parsed.Target.Port,
+			IdentityFile: parsed.Target.IdentityFile,
+		},
 		Runtime:     "docker",
 		Status:      "running",
 		LastApplied: time.Now().UTC(),
 		HTTPPort:    node.Ports.HTTP,
 		GRPCPort:    node.Ports.GRPC,
+		InstallPath: node.InstallPath,
+		Labels:      node.Labels,
 	})
 	if err := store.Save(deployState); err != nil {
-		return err
+		return output.NewError("STATE_ERROR", output.ExitGeneralError,
+			"failed to persist state: "+err.Error())
 	}
 	writeAudit(auditEvent{
 		Command: "network-add",
 		Node:    nodeName,
-		Target:  "local",
+		Target:  parsed.Target.Type, // honors the intent target, not hardcoded "local"
 		Result:  "success",
 		Start:   start,
 	})

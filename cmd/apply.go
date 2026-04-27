@@ -93,12 +93,16 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	// 6. Check for changes
 	existing := store.GetNode(deployState, parsed.Name)
-	if existing != nil && existing.IntentHash == intentHash && existing.Status == "running" {
-		// No changes needed
+	// Hash match means there is nothing to deploy regardless of current
+	// status. Previously the no-op short-circuit only fired when status
+	// was "running", so a stopped node forced HUMAN_REQUIRED for an
+	// identical intent — frustrating in CI pipelines that re-apply
+	// before issuing a `start`.
+	if existing != nil && existing.IntentHash == intentHash {
 		if !quiet {
 			result := map[string]any{
 				"name":    parsed.Name,
-				"status":  "running",
+				"status":  existing.Status,
 				"changes": []any{},
 				"message": "No changes detected",
 			}
@@ -107,7 +111,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// 7. Confirmation for changes on existing node (unless --auto-approve)
+	// 7. Confirmation for real changes on existing node (unless --auto-approve)
 	if existing != nil && !applyAutoApprove {
 		return exitWithError(outputFmt, "HUMAN_REQUIRED", output.ExitHumanRequired,
 			fmt.Sprintf("Changes detected for node %q. Review with: trond plan --intent %s", parsed.Name, applyIntentPath),
@@ -200,6 +204,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		HTTPPort:    node.Ports.HTTP,
 		GRPCPort:    node.Ports.GRPC,
 		Labels:      node.Labels,
+		InstallPath: node.InstallPath,
 	}
 	if existing != nil {
 		managedNode.PreviousVersion = existing.Version

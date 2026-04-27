@@ -49,17 +49,30 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	nc.Node.PreviousVersion = previousVersion
 	nc.Node.Version = upgradeVersion
 
-	// Start with new version
+	// Start with new version. On failure, restore the previous version
+	// in state and try to bring it back up. Surface BOTH errors to the
+	// user — a silent rollback-failed leaves the operator thinking the
+	// node is back when in fact nothing is running.
 	if err := nc.Runtime.Start(cmd.Context(), name); err != nil {
-		// Rollback
 		nc.Node.Version = previousVersion
 		nc.Node.PreviousVersion = ""
-		nc.Runtime.Start(cmd.Context(), name)
+		rollbackErr := nc.Runtime.Start(cmd.Context(), name)
 		nc.SaveState()
-		writeAudit(auditEvent{Command: "upgrade", Node: name, Target: nc.Target.String(), Result: "rollback", ErrorCode: "UPGRADE_ERROR", Start: start})
+		writeAudit(auditEvent{
+			Command:   "upgrade",
+			Node:      name,
+			Target:    nc.Target.String(),
+			Result:    "rollback",
+			ErrorCode: "UPGRADE_ERROR",
+			Start:     start,
+		})
 
+		msg := fmt.Sprintf("Upgrade failed, rolled back to %s: %v", previousVersion, err)
+		if rollbackErr != nil {
+			msg = fmt.Sprintf("%s; rollback start ALSO failed: %v", msg, rollbackErr)
+		}
 		return exitWithError(outputFmt, "UPGRADE_ERROR", output.ExitGeneralError,
-			fmt.Sprintf("Upgrade failed, rolled back to %s: %v", previousVersion, err),
+			msg,
 			"Check logs: trond logs "+name,
 			"Run diagnostics: trond diagnose "+name)
 	}

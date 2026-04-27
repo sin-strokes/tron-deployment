@@ -98,7 +98,13 @@ func resolveTargetFromNode(node *state.ManagedNode) (target.Target, error) {
 func resolveRuntimeForNode(node *state.ManagedNode, tgt target.Target) runtime.Runtime {
 	switch node.Runtime {
 	case "jar":
-		return runtime.NewJarRuntime(tgt)
+		jr := runtime.NewJarRuntime(tgt)
+		// Tell the runtime where to purge from when remove --keep-data=false
+		// runs. Without this, Remove(purge=true) silently does nothing.
+		if node.InstallPath != "" {
+			jr.SetPurgeInstallPath(node.InstallPath)
+		}
+		return jr
 	default:
 		return runtime.NewDockerRuntime(tgt, deploymentsDir())
 	}
