@@ -29,4 +29,7 @@ func init() {
 	Cmd.AddCommand(sourcesCmd)
 	Cmd.AddCommand(listCmd)
 	Cmd.AddCommand(downloadCmd)
+	Cmd.AddCommand(jobsCmd)
+	Cmd.AddCommand(logsCmd)
+	Cmd.AddCommand(stopCmd)
 }

@@ -64,3 +64,10 @@ func AuditLog() string {
 func Deployments() string {
 	return filepath.Join(BaseDir(), "deployments")
 }
+
+// SnapshotJobs returns the directory where detached `snapshot download`
+// jobs persist their manifest (.json) and combined stdout/stderr log.
+// Created on demand by the caller.
+func SnapshotJobs() string {
+	return filepath.Join(BaseDir(), "snapshots")
+}

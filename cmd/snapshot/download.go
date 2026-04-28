@@ -26,6 +26,7 @@ var (
 	dlForce    bool
 	dlNoVerify bool
 	dlDryRun   bool
+	dlDetach   bool
 )
 
 var downloadCmd = &cobra.Command{
@@ -66,6 +67,7 @@ func init() {
 	downloadCmd.Flags().BoolVar(&dlForce, "force", false, "Overwrite existing database in destination")
 	downloadCmd.Flags().BoolVar(&dlNoVerify, "no-verify", false, "Skip MD5 verification (not recommended)")
 	downloadCmd.Flags().BoolVar(&dlDryRun, "dry-run", false, "Print what would be downloaded and exit")
+	downloadCmd.Flags().BoolVar(&dlDetach, "detach", false, "Run in background; survives terminal close (logs to ~/.trond/snapshots/<id>.log)")
 }
 
 func runDownload(cmd *cobra.Command, _ []string) error {
@@ -127,6 +129,15 @@ func runDownload(cmd *cobra.Command, _ []string) error {
 		return output.NewError("DISK_SPACE_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("need ~%s free in %s, have %s",
 				humanGB(pre.NeededBytes), dest, humanGB(pre.FreeBytes)))
+	}
+
+	// Hand off to a detached child if requested. We run the same trond
+	// binary with the same args minus --detach, redirected to a log file
+	// in the per-user state dir; the child survives terminal close (we
+	// disown via Setsid so SIGHUP doesn't reach it). Returns immediately
+	// with the job manifest.
+	if dlDetach {
+		return spawnDetached(outputFmt, src, backup, dest)
 	}
 
 	if outputFmt != "json" {
