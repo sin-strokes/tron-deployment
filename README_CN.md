@@ -71,9 +71,15 @@ trond apply --intent my-node.yaml --auto-approve --wait
 trond status my-node
 trond health my-node
 trond diagnose my-node
+
+# 6.（可选）跳过创世同步：拉官方快照
+#    流式下载 + 流式解压（不落 .tgz），磁盘空间 + 已有数据双重预检。
+#    --detach 让长时间下载在终端关闭后继续运行。
+trond snapshot download --network mainnet --detach
+trond snapshot logs <job-id> -f
 ```
 
-## 命令速览（共 33 条）
+## 命令速览
 
 | 类别 | 命令 |
 |---|---|
@@ -83,6 +89,7 @@ trond diagnose my-node
 | **测试 SDK** | `exec` · `files put`/`files get` · `wait` |
 | **混沌** | `disconnect` · `connect` · `partition` · `heal` |
 | **网络** | `network create` · `network add` · `network status` · `network destroy` |
+| **快照** | `snapshot sources` · `snapshot list` · `snapshot download [--detach]` · `snapshot jobs` · `snapshot logs` · `snapshot stop` |
 | **环境** | `preflight` · `bootstrap` |
 | **知识库** | `knowledge` |
 | **工具** | `doctor [--check-update]` · `version [--check-update]` · `completion [--install]` |
@@ -154,6 +161,42 @@ SR_KEY=da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0 \
 ```
 
 trond 会自动给 fullnode 配 `node.active=["pn-node0:<p2p>"]` 让它们对等。
+
+## 快照下载
+
+跳过从创世块同步（主网要好几天）。trond 把上游 .tgz 通过 HTTP body → md5 → gzip → tar → 文件系统流式串起来，**全程不落 .tgz**——磁盘需求减半，下载和解压时间重叠。
+
+```bash
+# 看可用源
+trond snapshot sources
+
+# 看某网络的可用 backup（mainnet HTML index 抓取；nile 按日期生成）
+trond snapshot list --network mainnet
+
+# 干跑：URL、预计大小、磁盘空间、是否要覆盖已有 db、md5 sidecar 是否存在
+trond snapshot download --network mainnet --dry-run
+
+# 真正下载（lite 默认；解压到 ./output-directory）
+trond snapshot download --network mainnet
+trond snapshot download --network mainnet --type full --region america
+
+# 后台跑（重新 exec 自己 + Setsid，PPID=1，关终端不死）
+trond snapshot download --network mainnet --detach
+trond snapshot jobs                       # 看任务列表
+trond snapshot logs <job-id> -f           # tail -F 进度
+trond snapshot stop <job-id>              # SIGTERM；--force 用 SIGKILL
+```
+
+**安全护栏**：
+- 已有 `output-directory/database` 时拒绝覆盖（HUMAN_REQUIRED 退出码 10），加 `--force` 才覆盖
+- `userdata/` 永远保留（witness 私钥、operator state 都在里面，快照里没有）
+- HEAD 拿 Content-Length，比对 `Statfs(Bavail*Bsize)`，预留 ~2× 余量
+- 下载同时算 md5，与 `.md5sum` sidecar 比对（缺 sidecar 时给提示，不强制；可 `--no-verify`）
+- tar 路径 traversal（`..`）拒绝；不向已存在的 symlink 写入
+
+**镜像列表**（七个，可用 `trond snapshot sources` 实时看）：
+- 主网：4 个 leveldb full archive（新加坡 ×2 / 美国 ×2，含/不含内部交易）+ 1 个 rocksdb full + 1 个 leveldb lite
+- Nile 测试网：1 个 S3 mirror（lite/full 共用）
 
 ## 配置模板
 

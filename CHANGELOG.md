@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `trond snapshot` — chain-database snapshot subsystem (mainnet ×6 + nile
+  mirrors). Streams the upstream `.tgz` through gunzip + tar in one
+  pipeline, never writing the archive to disk. HEAD probe + `Statfs` verify
+  free space before any GET; existing `output-directory/database` refuses
+  overwrite without `--force` (HUMAN_REQUIRED, exit 10); pre-existing
+  `userdata/` is preserved across extraction. MD5 sidecar verified inline.
+  Subcommands:
+    - `snapshot sources` — list mirrors (text or JSON)
+    - `snapshot list --network mainnet|nile [--domain ...]` — available backups, newest-first
+    - `snapshot download --network <n> [--type lite|full] [--region s|a]
+      [--db-engine leveldb|rocksdb] [--backup ...] [--to <dir>]
+      [--node <name>] [--force] [--no-verify] [--dry-run] [--detach]`
+    - `snapshot jobs` — list background downloads (running / stopped)
+    - `snapshot logs <job-id> [-f] [-n N]` — tail / follow log
+    - `snapshot stop <job-id> [--force]` — SIGTERM (or SIGKILL)
+- `--detach` re-execs trond with `SysProcAttr.Setsid=true`; the child
+  becomes PPID 1 and survives terminal close. Logs land at
+  `~/.trond/snapshots/<id>.log`; manifests at `<id>.json`.
 - `trond doctor` — environment self-check (state, lock, docker CLI,
   version drift via `--check-update`)
 - `trond version --check-update` — query GitHub releases, compare to

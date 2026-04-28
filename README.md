@@ -145,6 +145,16 @@ trond apply --intent intent.yaml --auto-approve
 trond status my-fullnode
 ```
 
+6. *(Optional)* **Skip the genesis sync** with a snapshot. A fresh mainnet
+   fullnode otherwise spends days catching up from block 0:
+
+```bash
+# Stream the latest mainnet lite snapshot (~50 GB) into ./output-directory.
+# Add --detach so the multi-hour transfer survives terminal close.
+trond snapshot download --network mainnet --detach
+trond snapshot logs <job-id> -f
+```
+
 ## Commands
 
 ### Lifecycle
@@ -184,6 +194,21 @@ trond status my-fullnode
 | `trond network add` | Append a node to an existing network |
 | `trond network status` | Show private network status |
 | `trond network destroy` | Destroy a private network |
+
+### Snapshots
+
+Skip the days-long sync from genesis by pulling an official chain database snapshot. trond streams the tarball through gunzip + tar in one pipeline (no on-disk `.tgz`), MD5-verifies inline, and pre-checks free disk space.
+
+| Command | Description |
+|---|---|
+| `trond snapshot sources` | List known mirrors (mainnet ×6 + nile) |
+| `trond snapshot list --network <net>` | Show available backups for a source |
+| `trond snapshot download --network <net> [--type lite\|full] [--region <r>] [--detach]` | Stream-download into `./output-directory` (or `--to <dir>`) |
+| `trond snapshot jobs` | List background download jobs (with `--detach`) |
+| `trond snapshot logs <job-id> [-f] [-n N]` | Tail / follow a background download's log |
+| `trond snapshot stop <job-id> [--force]` | SIGTERM (SIGKILL with `--force`) a background download |
+
+`--detach` re-execs trond as a session leader (`Setsid`); the child becomes PPID 1 and survives terminal close. Logs land at `~/.trond/snapshots/<id>.log`. Existing chain data is refused without `--force` (HUMAN_REQUIRED, exit 10); pre-existing `userdata/` is preserved across extraction. `--dry-run` prints the plan (URL, expected size, free space, would-overwrite) without sending a single GET.
 
 ### Test-harness SDK
 
