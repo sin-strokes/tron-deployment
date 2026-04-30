@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -127,23 +128,26 @@ func spawnDetached(outputFmt string, src *snapshot.Source, backup, dest string) 
 	return nil
 }
 
-// stripDetach returns argv with the --detach flag removed in any of its
-// CLI-acceptable forms (--detach, --detach=true, -detach). Used so the
-// re-execed child runs in foreground mode within its detached session.
+// stripDetach returns argv with the --detach flag removed in any of
+// cobra's accepted forms (--detach, --detach=true, --detach=false,
+// --detach=1, --detach=0, single-dash equivalents). Used so the
+// re-execed child runs in foreground mode within its detached session;
+// without this, the child would re-enter the detach branch and fork
+// indefinitely.
 func stripDetach(argv []string) []string {
 	out := make([]string, 0, len(argv))
 	for _, a := range argv {
 		if a == "--detach" || a == "-detach" {
 			continue
 		}
-		if len(a) > 9 && (a[:9] == "--detach=" || a[:8] == "-detach=") {
+		if strings.HasPrefix(a, "--detach=") || strings.HasPrefix(a, "-detach=") {
 			continue
 		}
 		out = append(out, a)
 	}
 	// Defensive: ensure we didn't strip away the trond invocation entirely.
 	// If somehow the binary path got dropped, restore from os.Args[0].
-	if len(out) == 0 {
+	if len(out) == 0 && len(argv) > 0 {
 		out = append(out, argv[0])
 	}
 	return slices.Clip(out)

@@ -66,11 +66,15 @@ via `--domain 35.247.128.170`.
 
 ## Disk-space pre-check
 
-Before any GET, trond:
+Before any tarball bytes hit the wire, trond:
 
-1. HEADs the tarball URL → reads `Content-Length`.
-2. `Statfs(destination)` → reads available bytes.
-3. Refuses to start if free space < `Content-Length × 2`.
+1. Sends an HTTP HEAD to the tarball URL → reads `Content-Length`. The
+   body is never opened on this probe.
+2. Issues a separate HEAD to the `.md5sum` sidecar → records whether
+   inline verification will be possible.
+3. `Statfs(destination)` → reads available bytes (Bavail × Bsize, the
+   same number `df` shows).
+4. Refuses to start the GET if free space < `Content-Length × 2`.
 
 The 2× headroom covers concurrent extraction (when the new database is
 landing while the old one hasn't been removed yet) and the slop java-tron

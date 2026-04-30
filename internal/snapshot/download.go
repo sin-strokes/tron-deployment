@@ -397,7 +397,11 @@ func (p *progressReader) Read(b []byte) (int, error) {
 		p.read += int64(n)
 	}
 	// Throttle UI to ~10 Hz; skip if the caller didn't supply a cb.
-	if p.cb != nil && (errors.Is(err, io.EOF) || time.Since(p.lastEmit) > 100*time.Millisecond) {
+	// On any terminal condition (EOF or transport error) flush a final
+	// frame so the user's last-seen progress matches the actual byte
+	// count — without this, a connection drop at 87% would leave the
+	// stale "87% eta ..." line on the terminal.
+	if p.cb != nil && (err != nil || time.Since(p.lastEmit) > 100*time.Millisecond) {
 		p.cb(p.read, p.total)
 		p.lastEmit = time.Now()
 	}

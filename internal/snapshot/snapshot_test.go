@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -201,6 +202,90 @@ func mustGunzip(t *testing.T, tgz []byte) *gzip.Reader {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestProgressReader_FlushesOnError(t *testing.T) {
+	// Reader returns 100 bytes then a non-EOF error: simulates a
+	// truncated transport. The progress callback should fire with the
+	// final byte count even though we never reached EOF — without the
+	// flush, a connection drop at 87% would leave a stale "87% eta ..."
+	// line on the terminal.
+	src := &errAfterReader{data: bytes.Repeat([]byte("x"), 100), err: errFakeNetwork}
+
+	var lastDownloaded int64
+	calls := 0
+	pr := &progressReader{
+		r:     src,
+		total: 1000,
+		cb: func(d, _ int64) {
+			lastDownloaded = d
+			calls++
+		},
+	}
+
+	// Drain: errAfterReader returns data first (no err), then err on the
+	// next Read. io.ReadAll iterates Read until a non-nil err is returned.
+	if _, err := io.ReadAll(pr); err != errFakeNetwork {
+		t.Fatalf("expected fake network error, got %v", err)
+	}
+	if calls == 0 {
+		t.Fatalf("expected callback to fire on terminal error, got %d calls", calls)
+	}
+	if lastDownloaded != 100 {
+		t.Fatalf("expected final progress = 100 bytes, got %d", lastDownloaded)
+	}
+}
+
+func TestProgressReader_FlushesOnEOF(t *testing.T) {
+	src := &errAfterReader{data: []byte("hello"), err: io.EOF}
+	var calls int
+	pr := &progressReader{
+		r:     src,
+		total: 5,
+		cb:    func(_, _ int64) { calls++ },
+	}
+	if _, err := io.ReadAll(pr); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if calls == 0 {
+		t.Fatal("expected callback to fire on EOF")
+	}
+}
+
+func TestProgressReader_NoCallbackWhenNil(t *testing.T) {
+	// Nil cb: must not panic, must propagate Read semantics unchanged.
+	src := &errAfterReader{data: []byte("hi"), err: io.EOF}
+	pr := &progressReader{r: src, total: 2}
+	buf := make([]byte, 8)
+	if _, err := pr.Read(buf); err != nil { // first Read returns data, no err
+		t.Fatalf("first read: %v", err)
+	}
+	if _, err := pr.Read(buf); err != io.EOF {
+		t.Fatalf("second read: expected EOF, got %v", err)
+	}
+}
+
+// errAfterReader returns `data` then `err`. Used to simulate a clean
+// EOF or a network truncation in progress-reader tests.
+type errAfterReader struct {
+	data []byte
+	off  int
+	err  error
+}
+
+var errFakeNetwork = stubError("fake network error")
+
+type stubError string
+
+func (e stubError) Error() string { return string(e) }
+
+func (r *errAfterReader) Read(p []byte) (int, error) {
+	if r.off >= len(r.data) {
+		return 0, r.err
+	}
+	n := copy(p, r.data[r.off:])
+	r.off += n
+	return n, nil
 }
 
 // errorsAs is a tiny shim so the test file doesn't need to import
