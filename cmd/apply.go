@@ -242,6 +242,17 @@ func runApply(cmd *cobra.Command, args []string) error {
 	// --wait blocks until the node's HTTP API responds. The deploy itself
 	// has already succeeded by this point — a wait failure does not roll
 	// back, the test harness can still call diagnose / logs to investigate.
+	//
+	// Passing node.Ports.HTTP (intent's value) is correct here, despite
+	// looking like the verify-port-from-intent bug fixed in efdf446. The
+	// difference: ApplyDefaults() mutates node.Ports.HTTP in place at
+	// intent.Load() time, replacing 0 with either 8090 or the freshly
+	// auto-allocated port. We're calling waitForNodeReady in the same
+	// process, after that mutation, with the exact value we just deployed
+	// to the container. State is also written from this same value at
+	// L204, so the two stay consistent. The verify command had the bug
+	// because it loads the intent in a SEPARATE process and auto_ports
+	// would re-allocate different ports each time.
 	if applyWait {
 		waitErr := waitForNodeReady(cmd.Context(), tgt, parsed.Name, node.Ports.HTTP, applyWaitTimeout)
 		result["waited_ms"] = time.Since(start).Milliseconds() - result["duration_ms"].(int64)

@@ -48,26 +48,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 
 	node := &parsed.Nodes[0]
-
-	// Resolve which HTTP port to probe. Source-of-truth ladder:
-	//   1. state.json — what was actually allocated at deploy time. This
-	//      is the only correct value when the intent used auto_ports
-	//      (intent says 0; state has the OS-assigned port).
-	//   2. intent.Ports.HTTP — explicit operator value, used pre-deploy
-	//      or when state hasn't been migrated to record ports yet.
-	//   3. 8090 — the java-tron default; last-resort fallback so an
-	//      out-of-the-box `verify` still does something useful.
-	httpPort := node.Ports.HTTP
-	if store, err := state.NewStore(statePath()); err == nil {
-		if st, err := store.Load(); err == nil {
-			if managed := store.GetNode(st, parsed.Name); managed != nil && managed.HTTPPort != 0 {
-				httpPort = managed.HTTPPort
-			}
-		}
-	}
-	if httpPort == 0 {
-		httpPort = 8090
-	}
+	httpPort := resolveVerifyPort(parsed.Name, node.Ports.HTTP)
 
 	deadline := time.Now().Add(verifyTimeout)
 	pollInterval := 10 * time.Second
@@ -107,4 +88,33 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		fmt.Sprintf("Node %s not healthy after %s", parsed.Name, verifyTimeout),
 		"Check node logs: trond logs "+parsed.Name,
 		"Run diagnostics: trond diagnose "+parsed.Name)
+}
+
+// resolveVerifyPort returns the HTTP port verify should probe.
+//
+// Source-of-truth ladder:
+//  1. state.json's HTTPPort — what was actually allocated at deploy
+//     time. This is the only correct value when the intent used
+//     auto_ports (intent says 0 there until ApplyDefaults runs, and
+//     each fresh Load reallocates different ports).
+//  2. intentPort — operator's explicit value, used pre-deploy or when
+//     a pre-1.0 state file predates the http_port field.
+//  3. 8090 — the java-tron default; last-resort fallback so an
+//     out-of-the-box `verify` still does something useful.
+//
+// Extracted as a free function so a unit test can exercise the ladder
+// with a synthetic state directory without standing up cobra.
+func resolveVerifyPort(name string, intentPort int) int {
+	port := intentPort
+	if store, err := state.NewStore(statePath()); err == nil {
+		if st, err := store.Load(); err == nil {
+			if managed := store.GetNode(st, name); managed != nil && managed.HTTPPort != 0 {
+				port = managed.HTTPPort
+			}
+		}
+	}
+	if port == 0 {
+		port = 8090
+	}
+	return port
 }
