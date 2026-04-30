@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/state"
 )
 
 var (
@@ -47,7 +48,23 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 
 	node := &parsed.Nodes[0]
+
+	// Resolve which HTTP port to probe. Source-of-truth ladder:
+	//   1. state.json — what was actually allocated at deploy time. This
+	//      is the only correct value when the intent used auto_ports
+	//      (intent says 0; state has the OS-assigned port).
+	//   2. intent.Ports.HTTP — explicit operator value, used pre-deploy
+	//      or when state hasn't been migrated to record ports yet.
+	//   3. 8090 — the java-tron default; last-resort fallback so an
+	//      out-of-the-box `verify` still does something useful.
 	httpPort := node.Ports.HTTP
+	if store, err := state.NewStore(statePath()); err == nil {
+		if st, err := store.Load(); err == nil {
+			if managed := store.GetNode(st, parsed.Name); managed != nil && managed.HTTPPort != 0 {
+				httpPort = managed.HTTPPort
+			}
+		}
+	}
 	if httpPort == 0 {
 		httpPort = 8090
 	}
