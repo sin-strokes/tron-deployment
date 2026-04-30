@@ -133,16 +133,76 @@ want it shown in `jobs` output.
 
 ## Putting a snapshot under a managed node
 
-For docker-runtime nodes, the chain DB lives in a docker volume — not a
-host path you can extract into. The clean pattern is:
+trond intentionally **does not** integrate snapshot download into
+`trond apply`. apply is supposed to be fast and idempotent (seconds);
+a multi-hour download inside apply would break that contract for every
+caller, including CI. The two stages stay decoupled:
 
-1. Add a `storage.path: /srv/tron/<node>` to your intent.
-2. Run `trond snapshot download --network mainnet --to /srv/tron/<node>`.
-3. `trond apply --intent <intent.yaml>` — the bind-mount picks up the
-   pre-extracted database on first start.
+```text
+[snapshot download --detach]   ──hours──>   tarball extracted to host path
+                                                   │
+                                                   ▼
+                                  [apply --intent <intent.yaml>]
+                                  reads storage.data, bind-mounts the
+                                  extracted directory into the container,
+                                  starts the node already-caught-up.
+```
 
-For jar-runtime nodes, `trond snapshot download --node <name>` resolves
-the destination from `install_path` in state automatically.
+### Path layout (docker runtime)
+
+The upstream tarball expands as `<dest>/output-directory/database/…`.
+java-tron expects to find the database at
+`/java-tron/output-directory/database` inside the container, so the
+intent's `storage.data` must point at the `output-directory` directory
+on the host:
+
+```yaml
+storage:
+  data: /srv/tron/my-fullnode/output-directory
+  logs: /srv/tron/my-fullnode/logs
+```
+
+Then:
+
+```bash
+trond snapshot download --network mainnet --to /srv/tron/my-fullnode --detach
+# wait for snapshot jobs to show state=stopped
+trond apply --intent <intent.yaml> --auto-approve --wait
+```
+
+`storage.path: /srv/tron/my-fullnode` *also* works but mounts
+`<path>/data` (a synthetic name trond made up) which doesn't line up
+with the tarball's top-level `output-directory/`. If you want the
+single-root convenience of `storage.path`, you'd need to first move
+`<path>/output-directory` to `<path>/data` after extraction — usually
+not worth the trouble; just use `storage.data` directly.
+
+Annotated example: [`examples/mainnet-fullnode-snapshot.yaml`](https://github.com/tronprotocol/tron-deployment/blob/master/examples/mainnet-fullnode-snapshot.yaml).
+
+### Path layout (jar runtime)
+
+For jar-runtime nodes `trond snapshot download --node <name>` resolves
+the destination from `install_path` in state automatically — the
+container/host distinction goes away.
+
+### What if I want apply to wait?
+
+We deliberately did not add `--snapshot` or `--wait-for-snapshot` flags
+to apply. If your CI really needs a single command, wrap them in shell:
+
+```bash
+trond snapshot download --network mainnet --to /srv/tron/my-fullnode --detach -o json \
+  | jq -r .job_id > /tmp/snap.id
+# poll until done; jobs returns rows so a tiny shell loop works:
+until [[ "$(trond snapshot jobs -o json | jq -r ".jobs[] | select(.id==\"$(cat /tmp/snap.id)\") | .running")" == "false" ]]; do
+  sleep 60
+done
+trond apply --intent <intent.yaml> --auto-approve --wait
+```
+
+Most production users want to run these steps days apart anyway —
+snapshot is a one-time per-node cost; apply runs on every config or
+version change.
 
 ## Common errors
 

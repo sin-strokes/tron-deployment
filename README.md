@@ -146,14 +146,29 @@ trond status my-fullnode
 ```
 
 6. *(Optional)* **Skip the genesis sync** with a snapshot. A fresh mainnet
-   fullnode otherwise spends days catching up from block 0:
+   fullnode otherwise spends days catching up from block 0. trond keeps
+   the download and the apply step separate — apply stays seconds-fast
+   and idempotent, while the download survives terminal close on its
+   own.
 
 ```bash
-# Stream the latest mainnet lite snapshot (~50 GB) into ./output-directory.
-# Add --detach so the multi-hour transfer survives terminal close.
-trond snapshot download --network mainnet --detach
-trond snapshot logs <job-id> -f
+# 1. Stage the chain database (hours, runs in background).
+sudo mkdir -p /srv/tron/my-fullnode && sudo chown $USER /srv/tron/my-fullnode
+trond snapshot download --network mainnet \
+  --to /srv/tron/my-fullnode --detach
+
+# 2. Walk away. Check back any time:
+trond snapshot jobs
+trond snapshot logs <job-id> -f       # or just `jobs`
+
+# 3. Once `jobs` shows state=stopped (and last line is clean), deploy.
+#    The intent below points storage.data at the extracted directory so
+#    the node starts caught-up.
+trond apply --intent examples/mainnet-fullnode-snapshot.yaml \
+  --auto-approve --wait
 ```
+
+Full annotated example with the storage layout: [`examples/mainnet-fullnode-snapshot.yaml`](examples/mainnet-fullnode-snapshot.yaml). Long-form rationale: `trond knowledge snapshots`.
 
 ## Commands
 
