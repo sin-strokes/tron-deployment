@@ -88,8 +88,9 @@ make build
 # Binary: ./bin/trond
 ```
 
-The first build downloads ~150 MB and takes ~15 s on a typical link;
-subsequent builds reuse the cached toolchain (1–2 s).
+The first build downloads roughly 250 MB total (~150 MB Go toolchain,
+~100 MB module cache) and takes ~15 s on a typical link; subsequent
+builds reuse the cached toolchain (1–2 s).
 
 If you'd rather use the Go you already have, opt out:
 

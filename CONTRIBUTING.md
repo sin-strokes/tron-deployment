@@ -40,9 +40,23 @@ Reclaim every byte:
 make clean-all
 ```
 
-When bumping the pinned Go version, edit `GO_VERSION` in `Makefile` and
-the four `expected_sha=` lines in `scripts/bootstrap-go.sh`. Hashes come
-from `https://go.dev/dl/?mode=json` — never from a third-party mirror.
+When bumping the pinned Go version, three places stay in sync:
+
+1. `GO_VERSION` in `Makefile`
+2. The four `expected_sha=` lines in `scripts/bootstrap-go.sh`
+3. The `toolchain go1.X.Y` directive in `go.mod` (so users on system Go
+   auto-fetch the same version when running `go build` directly)
+
+Hashes come from `https://go.dev/dl/?mode=json` — never from a
+third-party mirror. A one-liner for collecting them:
+
+```bash
+curl -sL "https://go.dev/dl/?mode=json" | \
+  python3 -c 'import sys,json; [print(f["filename"], f["sha256"]) \
+    for v in json.load(sys.stdin) if v["version"]=="go1.X.Y" \
+    for f in v.get("files",[]) if f["os"] in ("linux","darwin") \
+    and f["arch"] in ("amd64","arm64") and f["kind"]=="archive"]'
+```
 
 ## Filing an issue
 

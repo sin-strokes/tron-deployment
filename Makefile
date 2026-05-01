@@ -46,7 +46,7 @@ GOFLAGS    ?=
 ## bootstrap-go: Download + verify the project-local Go toolchain
 ##               (idempotent; safe to re-run; no-op if already current)
 bootstrap-go:
-	@GO_VERSION=$(GO_VERSION) ./scripts/bootstrap-go.sh
+	@GO_VERSION=$(GO_VERSION) $(CURDIR)/scripts/bootstrap-go.sh
 
 ## build: Build the trond binary for the current platform
 build: $(GO_BOOTSTRAP)
@@ -58,6 +58,8 @@ test: $(GO_BOOTSTRAP)
 
 ## lint: Run golangci-lint (compiled with the project Go toolchain)
 ##       so the linter and the project agree on the language version.
+##       v1.64.8 is the last v1-line release; v2 line requires a config
+##       schema migration. Bump only when the project moves to v2.
 lint: $(GO_BOOTSTRAP)
 	@$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 	$(GOPATH)/bin/golangci-lint run --timeout=5m ./...

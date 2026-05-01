@@ -11,6 +11,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Resolve secrets into job-level env so step-level `if:` conditions
+    # can probe them. The `secrets` context isn't accessible from `if:`
+    # directly, and step-level `env:` is evaluated after `if:` so the
+    # only working pattern is hoisting the resolution to the job.
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,10 +44,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Skip the login on forks that haven't set DOCKERHUB_USERNAME — the
+      # secret resolves to "" via the job-level env: block above, which
+      # is something `if:` is allowed to probe.
       - name: Log in to Docker Hub
-        if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        if: env.DOCKERHUB_USERNAME != ''
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
