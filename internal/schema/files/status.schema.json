@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/status.schema.json",
+  "title": "trond status output",
+  "description": "Returned by `trond status <node> -o json`. Combines stored state with a best-effort live probe of the node's HTTP API.",
+  "type": "object",
+  "required": ["name", "status"],
+  "properties": {
+    "name":         { "type": "string" },
+    "status":       {
+      "type": "string",
+      "enum": ["running", "stopped", "error", "unknown", "not_deployed"]
+    },
+    "runtime":      { "type": "string", "enum": ["docker", "jar"] },
+    "version":      { "type": "string" },
+    "target":       {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["local", "ssh"] },
+        "host": { "type": "string" },
+        "user": { "type": "string" }
+      }
+    },
+    "last_applied": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of the last apply that modified state."
+    },
+    "intent_hash":  { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "config_hash":  { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "api_endpoints": {
+      "type": "object",
+      "properties": {
+        "http": { "type": "string", "format": "uri" },
+        "grpc": { "type": "string" }
+      }
+    },
+    "block_height": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Latest block the node has processed; only present when status=running and the live HTTP probe succeeded."
+    },
+    "peer_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of currently connected peers; only present from live probe."
+    },
+    "is_synced": {
+      "type": "boolean",
+      "description": "True if block_height >= the network's perceived head. Derived from the same probe; absent if the probe failed."
+    },
+    "lag": {
+      "type": "integer",
+      "description": "Block delta between local height and the highest height the node has seen across peers; only present from live probe."
+    },
+    "probe_error": {
+      "type": "string",
+      "description": "Set when the live probe couldn't reach the HTTP API (timed out / refused). status fields from state.json are still present."
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/diagnose.schema.json",
+  "title": "trond diagnose output",
+  "description": "Returned by `trond diagnose <node> -o json`. Structured health report; agents should process failed checks first and follow each check's suggestions[] in order.",
+  "type": "object",
+  "required": ["name", "overall", "checks"],
+  "properties": {
+    "name":    { "type": "string" },
+    "overall": {
+      "type": "string",
+      "enum": ["pass", "warning", "fail"],
+      "description": "Aggregate verdict: fail iff any check failed; warning iff any check warned and none failed."
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "required": ["name", "status"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Stable identifier of this check.",
+          "examples": [
+            "sync_progress",
+            "peer_count",
+            "disk_space",
+            "port_listening",
+            "memory_usage"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pass", "warning", "fail"]
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable summary; not stable across versions."
+        },
+        "suggestions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ordered fix proposals; suggestions[0] is the most likely fix."
+        },
+        "details": {
+          "type": "object",
+          "description": "Check-specific structured data (e.g. observed peer count, disk free bytes).",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

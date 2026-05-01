@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/verify.schema.json",
+  "title": "trond verify output",
+  "description": "Returned by `trond verify --intent ... -o json`. Post-deploy gate; polls until block_height > 0 or timeout.",
+  "type": "object",
+  "required": ["name", "verified"],
+  "properties": {
+    "name":         { "type": "string" },
+    "verified":     {
+      "type": "boolean",
+      "description": "True if the node responded with a non-zero block_height before the timeout."
+    },
+    "block_height": { "type": "integer", "minimum": 0 },
+    "attempts":     { "type": "integer", "minimum": 1 },
+    "duration_ms":  { "type": "integer", "minimum": 0 }
+  }
+}

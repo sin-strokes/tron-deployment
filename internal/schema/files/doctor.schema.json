@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/doctor.schema.json",
+  "title": "trond doctor output",
+  "description": "Returned by `trond doctor -o json`. Self-check of the local trond install. First command users paste into a bug report.",
+  "type": "object",
+  "required": ["overall", "checks"],
+  "properties": {
+    "overall": { "type": "string", "enum": ["pass", "warn", "fail"] },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "message"],
+        "properties": {
+          "name":    {
+            "type": "string",
+            "examples": ["trond version", "state dir", "state.json", "state.lock", "audit.log", "docker CLI", "update check"]
+          },
+          "status":  { "type": "string", "enum": ["pass", "warn", "fail"] },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

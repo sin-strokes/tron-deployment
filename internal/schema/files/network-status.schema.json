@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/network-status.schema.json",
+  "title": "trond network status output",
+  "type": "object",
+  "required": ["name", "nodes"],
+  "properties": {
+    "name":  { "type": "string" },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name":         { "type": "string" },
+          "status":       { "type": "string" },
+          "block_height": { "type": "integer", "minimum": 0 },
+          "is_synced":    { "type": "boolean" },
+          "peer_count":   { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/version.schema.json",
+  "title": "trond version output",
+  "type": "object",
+  "required": ["version"],
+  "properties": {
+    "version":     { "type": "string", "examples": ["v0.1.0", "dev", "abc123-dirty"] },
+    "commit":      { "type": "string" },
+    "build_time":  { "type": "string", "format": "date-time" },
+    "go_version":  { "type": "string" },
+    "platform":    { "type": "string", "examples": ["darwin/arm64", "linux/amd64"] },
+    "latest_release": {
+      "type": "string",
+      "description": "Set when --check-update was passed and GitHub responded."
+    },
+    "update_available": {
+      "type": "boolean",
+      "description": "Set when --check-update was passed; true if latest_release > version."
+    }
+  }
+}

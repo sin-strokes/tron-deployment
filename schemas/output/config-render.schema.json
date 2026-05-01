@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/config-render.schema.json",
+  "title": "trond config render output",
+  "description": "Returned by `trond config render <intent.yaml> -o json`. Per-node rendered artefacts.",
+  "type": "object",
+  "required": ["name", "network", "nodes"],
+  "properties": {
+    "name":    { "type": "string" },
+    "network": { "type": "string" },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "name", "type", "hocon", "jvm_args"],
+        "properties": {
+          "index":    { "type": "integer", "minimum": 0 },
+          "name":     { "type": "string" },
+          "type":     { "type": "string", "enum": ["fullnode", "witness", "solidity", "lite"] },
+          "hocon":    { "type": "string", "description": "Full rendered java-tron .conf contents." },
+          "compose":  { "type": "string", "description": "Rendered docker-compose.yaml; empty for jar runtime." },
+          "systemd":  { "type": "string", "description": "Rendered systemd unit file; empty for docker runtime." },
+          "jvm_args": { "type": "string", "description": "Space-separated JVM args fed to FullNode -jvm." }
+        }
+      }
+    }
+  }
+}
