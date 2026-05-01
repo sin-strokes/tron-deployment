@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Release signatures via Sigstore cosign keyless OIDC. `checksums.txt`
+  is signed at release time using the GitHub Actions workflow's
+  short-lived OIDC token; the resulting `.sig` and `.pem` ship as
+  release artifacts and the signing event is recorded in Rekor. No
+  long-lived signing key is stored anywhere. Verification documented
+  in README ("Verifying a release") and `trond knowledge
+  release-signatures` (long-form: what keyless OIDC proves vs.
+  doesn't, alternatives table, SLSA upgrade path, common errors).
 - `trond snapshot` — chain-database snapshot subsystem (mainnet ×6 + nile
   mirrors). Streams the upstream `.tgz` through gunzip + tar in one
   pipeline, never writing the archive to disk. HEAD probe + `Statfs` verify

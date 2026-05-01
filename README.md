@@ -125,6 +125,47 @@ fpath=(~/.config/zsh/completions $fpath)
 autoload -U compinit && compinit
 ```
 
+## Verifying a release
+
+Every published release is signed with [Sigstore](https://www.sigstore.dev/) `cosign` keyless OIDC — no long-lived signing key, identity is the GitHub Actions workflow that built the release. The signature covers `checksums.txt`, which transitively covers every artifact (tarballs, .deb / .rpm / .apk packages, docker images, the homebrew formula).
+
+One-time setup:
+
+```bash
+# Linux / macOS — single static binary, no daemon
+go install github.com/sigstore/cosign/v2/cmd/cosign@latest
+# or via Homebrew
+brew install cosign
+```
+
+Verify a tarball:
+
+```bash
+TAG=v0.1.0    # the release you downloaded
+BASE=https://github.com/tronprotocol/tron-deployment/releases/download/$TAG
+
+# Pull the three signature artifacts alongside your tarball.
+curl -LO "$BASE/checksums.txt"
+curl -LO "$BASE/checksums.txt.sig"
+curl -LO "$BASE/checksums.txt.pem"
+
+# Step 1: confirm the signature was issued by THIS repo's release workflow.
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature   checksums.txt.sig \
+  --certificate-identity-regexp "^https://github\.com/tronprotocol/tron-deployment/\.github/workflows/release\.yml@refs/tags/" \
+  --certificate-oidc-issuer     https://token.actions.githubusercontent.com \
+  checksums.txt
+
+# Step 2: now that checksums.txt is trusted, confirm your tarball matches.
+sha256sum --check --ignore-missing checksums.txt   # Linux
+shasum -a 256 --check --ignore-missing checksums.txt   # macOS
+```
+
+If both steps pass you have proof the artifact came from a tagged run of this repo's `release.yml`, recorded immutably in the public [Rekor transparency log](https://rekor.sigstore.dev/).
+
+For more — what keyless OIDC actually proves, what it doesn't, when to use SLSA provenance on top — see `trond knowledge release-signatures`.
+
 ## Quickstart
 
 1. **Create an intent file** (or use an example):

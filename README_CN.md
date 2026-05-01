@@ -132,6 +132,7 @@ trond snapshot logs <job-id> -f
 - `jar.url` 仅支持 https，`sha256` 必填
 - SSH 命令白名单收紧（移除 apt/yum/curl/wget/kill 等）
 - witness 私钥 inline 进 HOCON，不通过容器 env 传递（typesafe-config 不做 ${ENV} 替换）
+- Release 二进制使用 Sigstore cosign keyless OIDC 签名，无长期密钥；签名身份绑死到 `tronprotocol/tron-deployment` 的 `release.yml` workflow，事件记录在公开的 Rekor 透明日志。验证方式见 `trond knowledge release-signatures` 或 README "Verifying a release" 章节
 
 ## 私有网络快速部署
 
