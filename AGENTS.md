@@ -385,12 +385,48 @@ trond schema "snapshot download" -o json
 trond schema apply --output-only -o json
 ```
 
+## MCP server
+
+For chat-based / IDE-embedded agents that can't shell out (Claude
+Desktop, Cursor, Cline, Continue.dev, Zed AI, ChatGPT Apps), trond
+runs as a Model Context Protocol server:
+
+```bash
+trond mcp        # speaks JSON-RPC over stdio
+```
+
+Configure once in your client. Example for Claude Desktop
+(`~/.config/claude-desktop/config.json` or
+`%APPDATA%\Claude\config.json`):
+
+```json
+{
+  "mcpServers": {
+    "trond": { "command": "/usr/local/bin/trond", "args": ["mcp"] }
+  }
+}
+```
+
+The server registers these tools (read-only unless marked):
+
+- **inspection**: `list`, `status`, `inspect`
+- **diagnostic**: `doctor`, `version`, `health`, `diagnose`
+- **config**: `config_validate`, `config_render`, `plan`
+- **lifecycle**: `apply` (destructive)
+- **snapshot**: `snapshot_sources`, `snapshot_list`, `snapshot_jobs`,
+  `snapshot_download` (destructive, emits MCP progress notifications)
+- **knowledge**: `knowledge_list`, `knowledge_get`
+
+Destructive tools carry the MCP `destructiveHint` annotation so MCP
+clients prompt the user. The server's `Instructions` field
+auto-injects guidance about the canonical workflows so the LLM picks
+up AGENTS.md context without the user having to paste it.
+
 Coming next:
 
-- `trond mcp` — Model Context Protocol server for IDE / chat-based
-  agents that can't shell out.
 - `trond recipe list/run` — pre-built multi-step playbooks for common
-  workflows.
+  workflows (deploy + snapshot, rotate witness key, recover failed
+  upgrade, etc.).
 
 ---
 

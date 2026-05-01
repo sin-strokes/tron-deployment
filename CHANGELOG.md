@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `trond mcp` — Model Context Protocol server. Speaks JSON-RPC over
+  stdio so chat-based / IDE-embedded agents (Claude Desktop, Cursor,
+  Cline, Continue.dev, Zed AI, ChatGPT Apps) can call trond
+  capabilities as structured tools without shelling out. Registers
+  17 tools across inspection (list/status/inspect), diagnostic
+  (doctor/version/health/diagnose), config (config_validate /
+  config_render / plan), lifecycle (apply, marked destructive),
+  snapshot (sources/list/jobs/download with MCP progress
+  notifications, marked destructive), and knowledge (list/get).
+  Tool input/output schemas auto-derived from typed Go structs via
+  the SDK's struct-tag inspection, kept in lockstep with the
+  implementations. Server Instructions field injects AGENTS.md-style
+  workflow guidance so the LLM picks up context without the user
+  pasting it.
 - `trond schema [command]` — dumps the entire CLI surface as a JSON
   manifest: every command, flag, type, default, plus the JSON Schema
   for each command's `--output json` result. Top-level
