@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `AGENTS.md` at repo root — machine-readable contract for AI agents
+  that CALL trond (distinct from `CLAUDE.md` which targets agents
+  EDITING this repo). Covers the JSON output convention, exit-code
+  semantics with retry strategy per code, four core workflows
+  (deploy / diagnose / snapshot / private network) with command
+  chains and field-level expectations, concurrency isolation via
+  `TROND_STATE_DIR`, anti-patterns. Linked from README and CLAUDE.md.
 - Release signatures via Sigstore cosign keyless OIDC. `checksums.txt`
   is signed at release time using the GitHub Actions workflow's
   short-lived OIDC token; the resulting `.sig` and `.pem` ship as

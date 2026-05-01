@@ -602,10 +602,19 @@ is the embedded copy used at runtime.
 See `examples/` for sample intent files:
 
 - `mainnet-fullnode.yaml` -- standard mainnet fullnode
+- `mainnet-fullnode-snapshot.yaml` -- mainnet fullnode that picks up a pre-extracted chain DB snapshot
 - `nile-fullnode.yaml` -- Nile testnet fullnode
 - `mainnet-witness.yaml` -- mainnet witness (Super Representative)
 - `private-network.yaml` -- multi-node private network
 - `remote-ssh-fullnode.yaml` -- deploy to remote host via SSH
+
+## For AI agents calling trond
+
+Read [`AGENTS.md`](AGENTS.md) at the repo root. It documents the JSON
+contract, exit-code semantics, retry guidance, four core workflows
+(deploy / diagnose / snapshot / private network), and concurrency
+isolation via `TROND_STATE_DIR`. Designed so an agent that reads it
+once can drive trond without trial-and-error against `--help` output.
 
 ## Development
 
