@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `trond recipe list / show / run` — declarative multi-step workflow
+  runner. Recipes are YAML files in `recipes/*.yaml` (also embedded
+  via go:embed) that codify the canonical AGENTS.md workflows: deploy
+  fresh node, deploy with snapshot, upgrade with auto-rollback,
+  recover failed upgrade, destroy private network. The runner
+  re-execs the trond binary for each step, captures JSON output, and
+  feeds named fields forward via `{{ steps.<id>.<field> }}`
+  substitution. Per-step `on_failure: abort | continue | rollback`
+  controls failure semantics; rollback steps run as best-effort
+  cleanup. Five recipes ship; adding more is one YAML file each.
 - `trond mcp` — Model Context Protocol server. Speaks JSON-RPC over
   stdio so chat-based / IDE-embedded agents (Claude Desktop, Cursor,
   Cline, Continue.dev, Zed AI, ChatGPT Apps) can call trond

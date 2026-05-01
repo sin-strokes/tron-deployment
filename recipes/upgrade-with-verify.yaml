@@ -1,0 +1,75 @@
+name: upgrade-with-verify
+description: |
+  Upgrade a managed node to a new java-tron version, with a verify
+  gate after the upgrade. If the new version comes up unhealthy,
+  on_failure=rollback triggers an automatic revert to the previous
+  version (which `trond upgrade` records in state.json before
+  swapping).
+
+  The trade-off vs running `trond upgrade <node> --version X`
+  directly: this recipe adds a verify step that catches "the new
+  binary started but isn't producing blocks" before declaring success.
+
+params:
+  - name: node
+    type: string
+    required: true
+    description: Managed node name.
+  - name: version
+    type: string
+    required: true
+    description: |
+      Target java-tron version, e.g. "4.8.1". Must be a tag the
+      configured runtime can pull.
+  - name: intent_path
+    type: path
+    required: true
+    description: |
+      Path to the intent.yaml that originally deployed this node;
+      `trond verify` needs it to know which port to probe.
+
+steps:
+  - id: pre-upgrade-status
+    description: Snapshot current state for the run record.
+    command: status
+    args:
+      - "{{ params.node }}"
+    persist:
+      - status
+      - block_height
+      - is_synced
+    on_failure: continue
+
+  - id: upgrade
+    description: |
+      `trond upgrade` records the previous version in state.json
+      before swapping; that's what auto-rollback below uses.
+    command: upgrade
+    args:
+      - "{{ params.node }}"
+      - --version
+      - "{{ params.version }}"
+      - --auto-approve
+    on_failure: rollback
+
+  - id: verify
+    description: |
+      Post-upgrade gate. If verify times out, the node is up but
+      not synced — rollback to be safe.
+    command: verify
+    args:
+      - --intent
+      - "{{ params.intent_path }}"
+      - --timeout
+      - 10m
+    on_failure: rollback
+
+# Rollback runs when upgrade or verify fails. The rollback subcommand
+# itself reads state.json's previous_version and swaps back.
+rollback:
+  - id: revert
+    command: rollback
+    args:
+      - "{{ params.node }}"
+      - --auto-approve
+    on_failure: continue

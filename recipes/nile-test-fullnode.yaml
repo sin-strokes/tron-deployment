@@ -1,0 +1,55 @@
+name: nile-test-fullnode
+description: |
+  Deploy a fresh Nile testnet fullnode end-to-end. The shortest happy
+  path: validate → preflight → apply --wait → verify. No snapshot,
+  since Nile syncs in hours from genesis. Use this for dev / smoke
+  tests; mainnet operators should use fresh-mainnet-fullnode-with-snapshot.
+
+params:
+  - name: intent_path
+    type: path
+    required: true
+    description: |
+      Path to a Nile fullnode intent.yaml. See examples/nile-fullnode.yaml
+      for a starting template.
+
+steps:
+  - id: validate
+    description: Catch typos before any network IO.
+    command: config validate
+    args:
+      - "{{ params.intent_path }}"
+    on_failure: abort
+
+  - id: preflight
+    description: Verify Docker / memory / ports on the target.
+    command: preflight
+    args:
+      - --intent
+      - "{{ params.intent_path }}"
+    on_failure: abort
+
+  - id: apply
+    description: Deploy the node and block until HTTP responds.
+    command: apply
+    args:
+      - --intent
+      - "{{ params.intent_path }}"
+      - --auto-approve
+      - --wait
+      - --wait-timeout
+      - 5m
+    persist:
+      - name
+      - endpoints
+    on_failure: abort
+
+  - id: verify
+    description: Confirm the node is producing or relaying blocks.
+    command: verify
+    args:
+      - --intent
+      - "{{ params.intent_path }}"
+      - --timeout
+      - 5m
+    on_failure: abort

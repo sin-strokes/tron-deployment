@@ -1,0 +1,43 @@
+name: recover-failed-upgrade
+description: |
+  An upgrade left a node unhealthy. Diagnose, then roll back to the
+  previous version recorded in state.json, then verify the rollback
+  worked.
+
+  Use this when `trond status <node>` shows status != "running" or
+  is_synced=false after a recent upgrade. If the node was healthy
+  before the upgrade, state.json's previous_version is the right
+  rollback target.
+
+params:
+  - name: node
+    type: string
+    required: true
+    description: Name of the managed node to recover.
+
+steps:
+  - id: diagnose
+    description: |
+      Capture the structured failure signal before we change anything.
+      Recipe doesn't branch on the result — it always rolls back —
+      but the diagnose output is preserved in the run result so the
+      caller can inspect what went wrong.
+    command: diagnose
+    args:
+      - "{{ params.node }}"
+    on_failure: continue
+
+  - id: rollback
+    description: Restore the previous version recorded in state.json.
+    command: rollback
+    args:
+      - "{{ params.node }}"
+      - --auto-approve
+    on_failure: abort
+
+  - id: verify
+    description: Confirm the rolled-back node is producing/relaying blocks.
+    command: status
+    args:
+      - "{{ params.node }}"
+    on_failure: continue
