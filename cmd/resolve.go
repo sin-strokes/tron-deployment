@@ -146,4 +146,3 @@ func writeAudit(ev auditEvent) {
 		Log().Warn("audit log write failed", "error", writeErr)
 	}
 }
-

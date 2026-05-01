@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/knowledge"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 )
@@ -17,8 +18,8 @@ import (
 // than HOCON keys. Both flows are useful, but they answer different
 // questions:
 //
-//   trond config docs <hocon-key>            "what does this java-tron key mean?"
-//   trond config validate <intent> --explain "what will trond actually deploy?"
+//	trond config docs <hocon-key>            "what does this java-tron key mean?"
+//	trond config validate <intent> --explain "what will trond actually deploy?"
 var docsCmd = &cobra.Command{
 	Use:     "docs <key>",
 	Aliases: []string{"explain"},

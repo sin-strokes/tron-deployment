@@ -33,7 +33,7 @@ type Recipe struct {
 // default cause `recipe run` to fail upfront before any step executes.
 type Param struct {
 	Name        string `yaml:"name"`
-	Type        string `yaml:"type,omitempty"`        // string | int | bool | path
+	Type        string `yaml:"type,omitempty"` // string | int | bool | path
 	Required    bool   `yaml:"required,omitempty"`
 	Default     string `yaml:"default,omitempty"`
 	Description string `yaml:"description,omitempty"`
@@ -43,8 +43,8 @@ type Param struct {
 // future kinds (poll, sleep, branch) live behind the same struct so
 // recipes don't need migration when added.
 type Step struct {
-	ID          string            `yaml:"id"`
-	Description string            `yaml:"description,omitempty"`
+	ID          string `yaml:"id"`
+	Description string `yaml:"description,omitempty"`
 
 	// Command is the trond subcommand path to invoke, e.g.
 	// "config validate", "snapshot download", "apply". Trond's own
@@ -88,14 +88,14 @@ type StepResult struct {
 // RunResult is what `recipe run` returns at the end. Stable JSON
 // shape so an MCP recipe-runner tool can return it verbatim.
 type RunResult struct {
-	Recipe       string        `json:"recipe"`
-	Status       string        `json:"status"` // success | failed | aborted | rolled_back
-	StartedAt    string        `json:"started_at"`
-	DurationMs   int64         `json:"duration_ms"`
-	Steps        []StepResult  `json:"steps"`
-	RollbackRan  bool          `json:"rollback_ran,omitempty"`
+	Recipe        string       `json:"recipe"`
+	Status        string       `json:"status"` // success | failed | aborted | rolled_back
+	StartedAt     string       `json:"started_at"`
+	DurationMs    int64        `json:"duration_ms"`
+	Steps         []StepResult `json:"steps"`
+	RollbackRan   bool         `json:"rollback_ran,omitempty"`
 	RollbackSteps []StepResult `json:"rollback_steps,omitempty"`
-	FailedAt     string        `json:"failed_at,omitempty"` // step ID
+	FailedAt      string       `json:"failed_at,omitempty"` // step ID
 }
 
 // captureOutput attempts to decode a step's stdout as JSON. Recipes

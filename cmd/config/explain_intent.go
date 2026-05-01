@@ -16,10 +16,11 @@ import (
 //
 // The layout intentionally mirrors the README "Intent Reference" so a
 // reader can cross-check fields one-to-one. Lines start with one of:
-//   ✓ value-as-set
-//   · default-applied
-//   ⚠ value-missing-but-might-matter
-//   →  derived-side-effect (e.g. JVM heap size from resources.memory)
+//
+//	✓ value-as-set
+//	· default-applied
+//	⚠ value-missing-but-might-matter
+//	→  derived-side-effect (e.g. JVM heap size from resources.memory)
 func printExplain(w io.Writer, raw, finalIntent *intent.Intent) {
 	fmt.Fprintf(w, "Intent: %s\n", finalIntent.Name)
 	fmt.Fprintln(w)

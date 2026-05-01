@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/target"
 )
@@ -20,9 +21,9 @@ import (
 //
 // Three probe families, mutually exclusive:
 //
-//   trond wait <node> --port 8090            — TCP connect succeeds
-//   trond wait <node> --http <url>           — HTTP 2xx (optional --json-eq)
-//   trond wait <node> --exec '<cmd>'         — command exits 0 inside container
+//	trond wait <node> --port 8090            — TCP connect succeeds
+//	trond wait <node> --http <url>           — HTTP 2xx (optional --json-eq)
+//	trond wait <node> --exec '<cmd>'         — command exits 0 inside container
 //
 // All probes share --timeout, --interval, and emit a JSON record on success.
 var waitCmd = &cobra.Command{
@@ -49,14 +50,14 @@ Options:
 }
 
 var (
-	waitPort     int
-	waitHTTP     string
-	waitExec     string
-	waitTimeout  time.Duration
-	waitInterval time.Duration
-	waitJSONPath string
-	waitJSONEq   string
-	waitJSONGt   float64
+	waitPort      int
+	waitHTTP      string
+	waitExec      string
+	waitTimeout   time.Duration
+	waitInterval  time.Duration
+	waitJSONPath  string
+	waitJSONEq    string
+	waitJSONGt    float64
 	waitJSONGtSet bool
 )
 
@@ -148,7 +149,7 @@ func runWait(cmd *cobra.Command, args []string) error {
 // expandHTTPURL substitutes the {http} placeholder with the node's HTTP
 // endpoint (host:port). Lets harnesses write generic probes once:
 //
-//   trond wait $name --http '{http}/wallet/getnowblock'
+//	trond wait $name --http '{http}/wallet/getnowblock'
 func expandHTTPURL(raw string, port int) string {
 	if !strings.Contains(raw, "{http}") {
 		return raw

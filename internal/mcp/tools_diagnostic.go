@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 )
@@ -229,8 +230,8 @@ func diagnoseTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*m
 	}
 	if node.Status != "running" {
 		checks = append(checks, map[string]any{
-			"name":   "process_running",
-			"status": "fail",
+			"name":    "process_running",
+			"status":  "fail",
 			"message": fmt.Sprintf("state.json reports status=%q; the node is not currently running", node.Status),
 			"suggestions": []string{
 				"Call the 'apply' tool with the original intent to (re)deploy",
@@ -239,8 +240,8 @@ func diagnoseTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*m
 		})
 	} else {
 		checks = append(checks, map[string]any{
-			"name":   "process_running",
-			"status": "pass",
+			"name":    "process_running",
+			"status":  "pass",
 			"message": "state.json reports status=running",
 		})
 	}

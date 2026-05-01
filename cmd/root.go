@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
 	configCmd "github.com/tronprotocol/tron-deployment/cmd/config"
 	networkCmd "github.com/tronprotocol/tron-deployment/cmd/network"
 	snapshotCmd "github.com/tronprotocol/tron-deployment/cmd/snapshot"
@@ -15,13 +16,13 @@ import (
 
 var (
 	// Global flags
-	outputFormat  string
-	logFormat     string
-	quiet         bool
-	verbose       bool
-	noColor       bool
-	configFile    string
-	stateDirFlag  string
+	outputFormat string
+	logFormat    string
+	quiet        bool
+	verbose      bool
+	noColor      bool
+	configFile   string
+	stateDirFlag string
 )
 
 // version, commit and buildTime are populated at link time via -ldflags by
@@ -43,7 +44,7 @@ then renders configuration and deploys via Docker or native jar+systemd.
 
 Supports local and remote (SSH) targets with structured JSON output
 for CI pipelines and AI agents.`,
-	Version: fmt.Sprintf("%s (commit %s, built %s)", version, commit, buildTime),
+	Version:       fmt.Sprintf("%s (commit %s, built %s)", version, commit, buildTime),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// Apply --state-dir before any subcommand runs so subpackages

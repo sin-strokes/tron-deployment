@@ -22,17 +22,17 @@ type Manifest struct {
 // commands nested below it, and (when registered) the JSON Schema for
 // its --output json result.
 type Command struct {
-	Name         string         `json:"name"`
-	FullName     string         `json:"full_name"`
-	Short        string         `json:"short,omitempty"`
-	Long         string         `json:"long,omitempty"`
-	Use          string         `json:"use"`
-	Aliases      []string       `json:"aliases,omitempty"`
-	Examples     string         `json:"examples,omitempty"`
-	Flags        []Flag         `json:"flags,omitempty"`
-	Subcommands  []Command      `json:"subcommands,omitempty"`
-	OutputSchema map[string]any `json:"output_schema,omitempty"`
-	OutputSchemaURL string      `json:"output_schema_url,omitempty"`
+	Name            string         `json:"name"`
+	FullName        string         `json:"full_name"`
+	Short           string         `json:"short,omitempty"`
+	Long            string         `json:"long,omitempty"`
+	Use             string         `json:"use"`
+	Aliases         []string       `json:"aliases,omitempty"`
+	Examples        string         `json:"examples,omitempty"`
+	Flags           []Flag         `json:"flags,omitempty"`
+	Subcommands     []Command      `json:"subcommands,omitempty"`
+	OutputSchema    map[string]any `json:"output_schema,omitempty"`
+	OutputSchemaURL string         `json:"output_schema_url,omitempty"`
 }
 
 // Flag captures the agent-relevant attributes of one cobra flag.
@@ -65,26 +65,26 @@ func Build(root *cobra.Command, schemaLookup map[string]string) Manifest {
 // path → schema short name. Update this whenever a new command gets a
 // JSON Schema.
 var DefaultSchemaLookup = map[string]string{
-	"trond apply":              "apply",
-	"trond plan":               "plan",
-	"trond status":             "status",
-	"trond list":               "list",
-	"trond inspect":            "inspect",
-	"trond diagnose":           "diagnose",
-	"trond health":             "health",
-	"trond verify":             "verify",
-	"trond preflight":          "preflight",
-	"trond doctor":             "doctor",
-	"trond version":            "version",
-	"trond events":             "events",
-	"trond config validate":    "config-validate",
-	"trond config render":      "config-render",
-	"trond network create":     "network-create",
-	"trond network status":     "network-status",
-	"trond snapshot sources":   "snapshot-sources",
-	"trond snapshot list":      "snapshot-list",
-	"trond snapshot download":  "snapshot-download",
-	"trond snapshot jobs":      "snapshot-jobs",
+	"trond apply":             "apply",
+	"trond plan":              "plan",
+	"trond status":            "status",
+	"trond list":              "list",
+	"trond inspect":           "inspect",
+	"trond diagnose":          "diagnose",
+	"trond health":            "health",
+	"trond verify":            "verify",
+	"trond preflight":         "preflight",
+	"trond doctor":            "doctor",
+	"trond version":           "version",
+	"trond events":            "events",
+	"trond config validate":   "config-validate",
+	"trond config render":     "config-render",
+	"trond network create":    "network-create",
+	"trond network status":    "network-status",
+	"trond snapshot sources":  "snapshot-sources",
+	"trond snapshot list":     "snapshot-list",
+	"trond snapshot download": "snapshot-download",
+	"trond snapshot jobs":     "snapshot-jobs",
 }
 
 // childCommands recursively gathers cobra children, skipping the

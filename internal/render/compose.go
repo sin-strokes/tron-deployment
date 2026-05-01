@@ -174,7 +174,7 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 	}
 	sb.WriteString("    ports:\n")
 	for _, p := range ports {
-		sb.WriteString(fmt.Sprintf("      - \"%s\"\n", p))
+		sb.WriteString(fmt.Sprintf("      - %q\n", p))
 	}
 	sb.WriteString("    volumes:\n")
 	// HOCON config: read-only bind mount of the rendered file into /java-tron/conf.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/state"
@@ -211,4 +212,3 @@ func checkUpdate(ctx context.Context) doctorCheck {
 	return doctorCheck{Name: "update check", Status: "pass",
 		Message: "up to date (" + latest + ")"}
 }
-

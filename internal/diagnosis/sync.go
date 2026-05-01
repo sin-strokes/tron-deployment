@@ -70,10 +70,3 @@ func (c *SyncChecker) Run(ctx context.Context, tgt target.Target, opts CheckOpts
 		Message: fmt.Sprintf("Block height: %d", height),
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/recipe"
 )
@@ -232,4 +233,3 @@ func firstParagraph(s string) string {
 	}
 	return s
 }
-

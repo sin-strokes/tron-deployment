@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/snapshot"
 )
@@ -70,14 +71,14 @@ func snapshotSourcesTool(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArg
 	rows := make([]map[string]any, 0, len(snapshot.SourceTable))
 	for _, s := range snapshot.SourceTable {
 		rows = append(rows, map[string]any{
-			"network":         s.Network,
-			"kind":            s.DBKind,
-			"engine":          s.DBEngine,
-			"region":          s.Region,
-			"domain":          s.Domain,
-			"base_url":        s.BaseURL,
-			"approx_size_gb":  s.ApproxSizeGB,
-			"description":     s.Description,
+			"network":        s.Network,
+			"kind":           s.DBKind,
+			"engine":         s.DBEngine,
+			"region":         s.Region,
+			"domain":         s.Domain,
+			"base_url":       s.BaseURL,
+			"approx_size_gb": s.ApproxSizeGB,
+			"description":    s.Description,
 		})
 	}
 	return jsonResult(map[string]any{"sources": rows})

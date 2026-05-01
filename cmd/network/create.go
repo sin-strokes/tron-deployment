@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
@@ -131,8 +132,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		store.UpsertNode(deployState, mn)
 
 		deployed = append(deployed, map[string]any{
-			"name": nodeName,
-			"type": node.Type,
+			"name":   nodeName,
+			"type":   node.Type,
 			"status": "running",
 			"endpoints": map[string]string{
 				"http": fmt.Sprintf("http://127.0.0.1:%d", node.Ports.HTTP),

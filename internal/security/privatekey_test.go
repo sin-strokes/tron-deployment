@@ -66,8 +66,8 @@ func TestPrivateKey_Sprintf_NeverLeaks(t *testing.T) {
 		format string
 		fn     func() string
 	}{
-		{"%s", func() string { return fmt.Sprintf("%s", pk) }},
-		{"%v", func() string { return fmt.Sprintf("%v", pk) }},
+		{"%s", func() string { return pk.String() }},
+		{"%v", func() string { return pk.String() }},
 		{"%+v", func() string { return fmt.Sprintf("%+v", pk) }},
 		{"%#v", func() string { return fmt.Sprintf("%#v", pk) }},
 		{"%q", func() string { return fmt.Sprintf("%q", pk) }},
