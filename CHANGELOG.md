@@ -1,0 +1,168 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- `AGENTS.md` at repo root — machine-readable contract for AI agents
+  that CALL trond (distinct from `CLAUDE.md` which targets agents
+  EDITING this repo). Covers the JSON output convention, exit-code
+  semantics with retry strategy per code, four core workflows
+  (deploy / diagnose / snapshot / private network) with command
+  chains and field-level expectations, concurrency isolation via
+  `TROND_STATE_DIR`, anti-patterns. Linked from README and CLAUDE.md.
+- Release signatures via Sigstore cosign keyless OIDC. `checksums.txt`
+  is signed at release time using the GitHub Actions workflow's
+  short-lived OIDC token; the resulting `.sig` and `.pem` ship as
+  release artifacts and the signing event is recorded in Rekor. No
+  long-lived signing key is stored anywhere. Verification documented
+  in README ("Verifying a release") and `trond knowledge
+  release-signatures` (long-form: what keyless OIDC proves vs.
+  doesn't, alternatives table, SLSA upgrade path, common errors).
+- `trond snapshot` — chain-database snapshot subsystem (mainnet ×6 + nile
+  mirrors). Streams the upstream `.tgz` through gunzip + tar in one
+  pipeline, never writing the archive to disk. HEAD probe + `Statfs` verify
+  free space before any GET; existing `output-directory/database` refuses
+  overwrite without `--force` (HUMAN_REQUIRED, exit 10); pre-existing
+  `userdata/` is preserved across extraction. MD5 sidecar verified inline.
+  Subcommands:
+    - `snapshot sources` — list mirrors (text or JSON)
+    - `snapshot list --network mainnet|nile [--domain ...]` — available backups, newest-first
+    - `snapshot download --network <n> [--type lite|full] [--region s|a]
+      [--db-engine leveldb|rocksdb] [--backup ...] [--to <dir>]
+      [--node <name>] [--force] [--no-verify] [--dry-run] [--detach]`
+    - `snapshot jobs` — list background downloads (running / stopped)
+    - `snapshot logs <job-id> [-f] [-n N]` — tail / follow log
+    - `snapshot stop <job-id> [--force]` — SIGTERM (or SIGKILL)
+- `--detach` re-execs trond with `SysProcAttr.Setsid=true`; the child
+  becomes PPID 1 and survives terminal close. Logs land at
+  `~/.trond/snapshots/<id>.log`; manifests at `<id>.json`.
+- `trond doctor` — environment self-check (state, lock, docker CLI,
+  version drift via `--check-update`)
+- `trond version --check-update` — query GitHub releases, compare to
+  the local build
+- `trond completion --install` — drop the script in the per-shell
+  standard location
+- `config render --node N` — render only one node from a multi-node intent
+- `config render --overlay <path>` — second intent merged on top
+- `config render -o json` — structured payload (hocon, compose, systemd,
+  jvm_args per node)
+- `config validate --explain` — per-field breakdown of explicit vs
+  default values, with derived JVM heap shown
+- `list --label k=v` and `inspect --label k=v` — repeatable AND filters
+  scoped to docker labels persisted in state
+- `nodes[].jar.{url,sha256}` — declarative jar download, https-only,
+  SHA256 mandatory when url is set
+- README: "Repository Evolution" + "Intent Reference" sections, install
+  one-liner, brew/deb/rpm/docker routes, shell completion section,
+  Chinese mirror in `README_CN.md`
+- `LICENSE` (MIT), `CHANGELOG.md`, `CONTRIBUTING.md`,
+  `.github/{ISSUE_TEMPLATE,PULL_REQUEST_TEMPLATE}.md`,
+  `.github/dependabot.yml`
+- `cmd/gendoc` — emits man(1) pages and per-command markdown
+- `scripts/install.sh` — single-shot installer with SHA256 verification
+- `Dockerfile.release` — slim alpine image with `tronprotocol/trond`
+
+### Changed
+- `goreleaser` now produces a homebrew tap, .deb / .rpm / .apk, and
+  multi-arch docker image alongside tar.gz archives; release notes
+  group commits by feat/fix
+- CI matrix expanded: `lint`, `test+coverage`, `govulncheck`, and
+  cross-compile jobs run on every PR; e2e is its own workflow with
+  the heavier schedule
+- `config explain` renamed to `config docs`; `explain` kept as alias
+- `auto_ports` now verifies TCP+UDP availability before allocating
+  (fixes P2P UDP-only collisions on macOS Docker)
+- `network destroy` resolves target per-node from state (was hard-coded
+  LocalTarget — SSH-deployed networks would leak containers)
+- `network add` persists the full target (Host/User/Port/IdentityFile/
+  InstallPath/Labels) so subsequent commands can rebuild the SSH
+  connection
+- `apply` short-circuits on hash match regardless of node status (was
+  forcing HUMAN_REQUIRED on a stopped node with an unchanged intent)
+- jar runtime `Remove(purge=true)` actually wipes the install dir
+  (was a documented TODO before); refuses `/` and empty paths
+
+### Fixed
+- Witness private key inlined into rendered HOCON — typesafe-config does
+  not perform `${ENV}` substitution, the literal `${SR_KEY}` was being
+  read as a 9-char witness key and the SR shut down with WITNESS_INIT(1)
+- Compose render aligned with the official tronprotocol/java-tron image:
+  `/java-tron/conf`, `/java-tron/output-directory`, `/java-tron/logs`,
+  `-jvm` arg, P2P UDP exposed. Containers no longer crash-loop
+- `network create` auto-wires `node.active` between siblings so peering
+  works when `auto_ports` randomizes the inside-container P2P port
+- `network destroy --confirm=typo` now refuses with NETWORK_NOT_FOUND
+  (previously silently succeeded with `removed: null`)
+- `port_listening` checker uses net.Dial instead of `ss -tlnp` (works
+  on macOS where ss isn't available)
+- `trond logs` reads `/java-tron/logs/tron.log` (java-tron writes to
+  file, not stdout — `docker compose logs` was empty)
+- `state.NodeTarget` persists `IdentityFile` (lifecycle commands lost
+  the SSH key after apply)
+
+### Security
+- Reject control characters (`\n`, `\r`, …) in every free-form intent
+  field; struct-tag `safe_string` + manual map/slice walk close compose
+  YAML and systemd unit injection vectors
+- `nodes[].jar.url` rejects http/file/ftp; SHA256 required when URL set
+- SSH command whitelist trimmed to lifecycle minimum (drop apt-get / yum
+  / dnf / curl / wget / kill / pkill / chown / cp / mv); `quoteArgs`
+  now also shellQuotes the cmd token defensively
+- SSH host-key verification distinguishes new host (eligible for opt-in
+  TOFU via `TROND_SSH_ACCEPT_NEW_HOSTS=1`) from pinned-key MISMATCH
+  (always rejected, even with TOFU)
+- `network add` now honors target.type instead of hard-coding
+  LocalTarget (an SSH intent would otherwise deploy on the operator's
+  local host)
+
+## [0.1.0-alpha] — 2026-XX-XX
+
+## [0.1.0-alpha] — 2026-XX-XX
+
+Initial public alpha. The project transitions from a curated set of HOCON
+configuration templates into a CLI for declarative TRON node deployment.
+
+### Added
+- 32 CLI commands across lifecycle (apply / stop / start / restart / upgrade /
+  rollback / remove), configuration (validate / render / diff / docs),
+  observability (status / list / logs / health / diagnose / verify / inspect /
+  events), test-harness SDK (exec / files / wait), chaos primitives
+  (disconnect / connect / partition / heal), private networks (create / add /
+  status / destroy), environment (preflight / bootstrap), knowledge base, and
+  meta (version / completion / help)
+- Declarative intent.yaml schema covering ~50 fields:
+  target (local/ssh, runtime, auto_ports), node (type, version, image, ports,
+  resources, jvm, storage, restart, extra_env, extra_args, labels, networks,
+  depends_on, healthcheck, ulimits, extra_hosts, entrypoint, logging,
+  shm_size, jar source URL+SHA256), network_overrides
+  (seeds, active_peers, p2p_version, discovery, max_connections, …),
+  witness_key (private_key_env, keystore_path, account_address),
+  config_overrides (arbitrary HOCON dotted-key escape hatch)
+- HOCON two-pass render: in-place key rewrites + appended override block
+- Compose render aligned with the official `tronprotocol/java-tron` image:
+  `/java-tron/conf`, `/java-tron/output-directory`, `/java-tron/logs`
+- SSH host-key verification with explicit MITM detection (TOFU opt-in via
+  `TROND_SSH_ACCEPT_NEW_HOSTS=1`)
+- SSH command whitelist enforced at `Exec` entry
+- Private key never written to env or stdout — `PrivateKey` type redacted in
+  every formatter; witness key inlined into HOCON (which is 0600 on disk)
+- `--state-dir` / `TROND_STATE_DIR` for parallel test enclaves
+- `target.auto_ports: true` allocates free TCP+UDP ports automatically
+- `network create` auto-wires `node.active` peering between siblings
+- Audit log (JSONL) for every mutating command, streamable via `events --follow`
+
+### Repository changes
+- HOCON templates remain at the repository root (`main_net_config.conf`,
+  `test_net_config.conf`, `private_net_config.conf`) and continue to track
+  upstream. `make sync-templates` refreshes them
+- Embedded copies under `internal/render/templates/` are kept in sync at
+  release time and bundled into the binary so `trond config render` works
+  from any working directory
+
+[Unreleased]: https://github.com/tronprotocol/tron-deployment/compare/v0.1.0-alpha...HEAD
+[0.1.0-alpha]: https://github.com/tronprotocol/tron-deployment/releases/tag/v0.1.0-alpha

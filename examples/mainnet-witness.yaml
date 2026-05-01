@@ -1,0 +1,33 @@
+# Deploy a mainnet witness node on a remote server via jar+systemd
+# Usage: SR_PRIVATE_KEY=<key> trond apply --intent examples/mainnet-witness.yaml
+name: my-witness
+
+target:
+  type: ssh
+  host: witness.example.com
+  user: tron
+  identity_file: ~/.ssh/id_rsa
+  runtime: jar
+
+network: mainnet
+
+nodes:
+  - type: witness
+    version: latest
+    # Preferred form. The legacy top-level `witness_key_env` still parses
+    # but is being phased out in favor of the structured block.
+    witness_key:
+      private_key_env: SR_PRIVATE_KEY
+    install_path: /opt/tron
+    system_user: tron
+    features:
+      metrics: true
+    resources:
+      memory: 32GB
+    jvm:
+      gc: G1
+      gc_log: true
+    ports:
+      http: 8090
+      grpc: 50051
+      p2p: 18888

@@ -1,0 +1,57 @@
+# Mainnet fullnode that picks up a pre-extracted snapshot.
+#
+# Workflow (canonical "snapshot first, apply second"):
+#
+#   # 1. Stage the chain database (hours, runs in background).
+#   sudo mkdir -p /srv/tron/my-fullnode && sudo chown $USER /srv/tron/my-fullnode
+#   trond snapshot download --network mainnet \
+#     --to /srv/tron/my-fullnode --detach
+#
+#   # 2. Watch progress (Ctrl-C is safe; the job keeps running).
+#   trond snapshot jobs
+#   trond snapshot logs <job-id> -f
+#
+#   # 3. Once `snapshot jobs` shows state=stopped (no error in last line):
+#   trond apply --intent examples/mainnet-fullnode-snapshot.yaml \
+#     --auto-approve --wait
+#
+# Why this pattern: apply is intentionally fast + idempotent. A multi-hour
+# download inside apply would break that contract. Keeping them
+# separate means apply stays seconds-fast, and the download survives
+# terminal close on its own (Setsid → PPID 1).
+#
+# Path layout: the upstream tarball expands as
+# `<dest>/output-directory/database/...`. We point storage.data at that
+# `output-directory` directory so the container's
+# `/java-tron/output-directory/database` resolves correctly. logs gets
+# its own bind so journald-style triage stays separate from the chain.
+
+name: my-fullnode
+
+target:
+  type: local
+  runtime: docker
+
+network: mainnet
+
+nodes:
+  - type: fullnode
+    version: latest
+    features:
+      jsonrpc: true
+      metrics: true
+    resources:
+      memory: 16GB
+    ports:
+      http: 8090
+      grpc: 50051
+      jsonrpc: 8545
+      p2p: 18888
+
+    # storage.data and storage.logs are absolute host paths → trond
+    # generates bind mounts (not named volumes). storage.path would also
+    # work, but storage.path mounts `<p>/data` which doesn't line up
+    # with the snapshot tarball's `output-directory/` top-level.
+    storage:
+      data: /srv/tron/my-fullnode/output-directory
+      logs: /srv/tron/my-fullnode/logs

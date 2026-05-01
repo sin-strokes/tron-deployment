@@ -1,0 +1,48 @@
+name: "Setup trond"
+description: "Download, verify, and cache the trond CLI binary"
+inputs:
+  version:
+    description: "trond version to install (default: latest)"
+    required: false
+    default: "latest"
+runs:
+  using: "composite"
+  steps:
+    - name: Determine version
+      id: version
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          VERSION=$(curl -s https://api.github.com/repos/tronprotocol/tron-deployment/releases/latest | jq -r .tag_name)
+        else
+          VERSION="${{ inputs.version }}"
+        fi
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Cache trond binary
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/trond
+        key: trond-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
+
+    - name: Download trond
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case $ARCH in
+          x86_64) ARCH="amd64" ;;
+          aarch64|arm64) ARCH="arm64" ;;
+        esac
+        VERSION="${{ steps.version.outputs.version }}"
+        URL="https://github.com/tronprotocol/tron-deployment/releases/download/${VERSION}/trond_${VERSION#v}_${OS}_${ARCH}.tar.gz"
+        curl -fSL "$URL" -o trond.tar.gz
+        tar xzf trond.tar.gz trond
+        chmod +x trond
+        sudo mv trond /usr/local/bin/trond
+
+    - name: Verify trond
+      shell: bash
+      run: trond --help > /dev/null

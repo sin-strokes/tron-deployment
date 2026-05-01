@@ -1,0 +1,36 @@
+# Go build artifacts
+bin/
+*.exe
+*.test
+*.out
+
+# Project-local Go toolchain and module cache (downloaded by
+# scripts/bootstrap-go.sh; isolated from the user's $HOME/go).
+.go-toolchain/
+.gopath/
+
+# goreleaser snapshot output
+dist/
+
+# Dependencies
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# trond state (local only)
+# ~/.trond/ is user-local, not in repo
+
+# Local Claude Code workspace state
+.claude/

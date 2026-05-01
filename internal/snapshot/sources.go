@@ -1,0 +1,214 @@
+// Package snapshot fetches java-tron chain database snapshots from the
+// upstream public mirrors and pipes them straight into a target directory
+// (no on-disk .tgz copy in between).
+//
+// The source list mirrors tron-docker/tools/trond/config/node.go as of
+// 2025-Q1 — when those endpoints rotate, update SourceTable here. We
+// deliberately don't pull the list over the network at start-up: the
+// upstream has no canonical "list-of-mirrors" endpoint, so a stale
+// hard-coded table beats a fragile bootstrap call.
+package snapshot
+
+// Network distinguishes which TRON network a snapshot belongs to. Private
+// networks don't have a public snapshot service; they sync from genesis.
+type Network string
+
+const (
+	NetworkMainnet Network = "mainnet"
+	NetworkNile    Network = "nile"
+)
+
+// DBKind narrows the database flavor of a snapshot. "lite" snapshots ship
+// only recent blocks (~tens of GB) and are what most users want. "full"
+// includes the entire chain history (~2 TB on mainnet) and is typically
+// only useful when running an archive node or rebuilding from scratch.
+type DBKind string
+
+const (
+	DBKindLite DBKind = "lite"
+	DBKindFull DBKind = "full"
+)
+
+// DBEngine differentiates LevelDB vs RocksDB encodings of the same data.
+// java-tron defaults to LevelDB; only one mainnet mirror publishes RocksDB.
+type DBEngine string
+
+const (
+	EngineLevelDB DBEngine = "leveldb"
+	EngineRocksDB DBEngine = "rocksdb"
+)
+
+// Region is purely informational — used so users in Asia / Americas can
+// pick a closer mirror to reduce download time. Not enforced anywhere.
+type Region string
+
+const (
+	RegionSingapore Region = "singapore"
+	RegionAmerica   Region = "america"
+)
+
+// Source describes one snapshot mirror.
+//
+// The `BaseURL` is what trond actually downloads from; it's a fully-formed
+// URL prefix because nile uses an S3 https endpoint while the mainnet
+// mirrors are plain `http://<ip>` directory listings. The struct is the
+// minimum trond needs to (a) render a `sources` table and (b) construct
+// per-backup tarball URLs in download.go.
+type Source struct {
+	Network        Network
+	DBKind         DBKind
+	DBEngine       DBEngine
+	Region         Region
+	Domain         string // primary key for --domain flag matching
+	BaseURL        string // "http(s)://host[/prefix]" — no trailing slash
+	IndexStrategy  string // "html" or "date" — how ListBackups builds the list
+	IncludesIntTx  bool   // true if archive includes internal transactions
+	IncludesAcctTx bool   // true if account-history TRX balance is included
+	ApproxSizeGB   int    // approximate compressed size, for human display
+	Description    string // shown by `trond snapshot sources`
+}
+
+// SourceTable is the curated list of upstream mirrors. Order matters
+// only insofar as users expect a stable column layout in the table view.
+//
+// IMPORTANT: when refreshing this list, prefer adding new entries over
+// rewriting existing ones — automation may key off `Domain`. Mark old
+// entries with a Description hint when they're being decommissioned.
+var SourceTable = []Source{
+	{
+		Network:       NetworkMainnet,
+		DBKind:        DBKindLite,
+		DBEngine:      EngineLevelDB,
+		Region:        RegionSingapore,
+		Domain:        "34.143.247.77",
+		BaseURL:       "http://34.143.247.77",
+		IndexStrategy: "html",
+		ApproxSizeGB:  46,
+		Description:   "Lite fullnode (~46 GB) — fastest start for typical fullnode use",
+	},
+	{
+		Network:       NetworkMainnet,
+		DBKind:        DBKindFull,
+		DBEngine:      EngineLevelDB,
+		Region:        RegionSingapore,
+		Domain:        "34.143.247.77",
+		BaseURL:       "http://34.143.247.77",
+		IndexStrategy: "html",
+		ApproxSizeGB:  2093,
+		Description:   "Full archive, no internal transactions",
+	},
+	{
+		Network:       NetworkMainnet,
+		DBKind:        DBKindFull,
+		DBEngine:      EngineLevelDB,
+		Region:        RegionSingapore,
+		Domain:        "35.247.128.170",
+		BaseURL:       "http://35.247.128.170",
+		IndexStrategy: "html",
+		IncludesIntTx: true,
+		ApproxSizeGB:  2278,
+		Description:   "Full archive WITH internal transactions",
+	},
+	{
+		Network:       NetworkMainnet,
+		DBKind:        DBKindFull,
+		DBEngine:      EngineLevelDB,
+		Region:        RegionAmerica,
+		Domain:        "34.86.86.229",
+		BaseURL:       "http://34.86.86.229",
+		IndexStrategy: "html",
+		ApproxSizeGB:  2094,
+		Description:   "Full archive, no internal transactions",
+	},
+	{
+		Network:        NetworkMainnet,
+		DBKind:         DBKindFull,
+		DBEngine:       EngineLevelDB,
+		Region:         RegionAmerica,
+		Domain:         "34.48.6.163",
+		BaseURL:        "http://34.48.6.163",
+		IndexStrategy:  "html",
+		IncludesAcctTx: true,
+		ApproxSizeGB:   2627,
+		Description:    "Full archive with account history TRX balance",
+	},
+	{
+		Network:       NetworkMainnet,
+		DBKind:        DBKindFull,
+		DBEngine:      EngineRocksDB,
+		Region:        RegionAmerica,
+		Domain:        "35.197.17.205",
+		BaseURL:       "http://35.197.17.205",
+		IndexStrategy: "html",
+		ApproxSizeGB:  2067,
+		Description:   "Full archive — RocksDB encoding (atypical)",
+	},
+	{
+		Network:       NetworkNile,
+		DBKind:        DBKindLite,
+		DBEngine:      EngineLevelDB,
+		Region:        RegionSingapore,
+		Domain:        "database.nileex.io",
+		BaseURL:       "https://nile-snapshots.s3-accelerate.amazonaws.com",
+		IndexStrategy: "date",
+		ApproxSizeGB:  30,
+		Description:   "Nile testnet fullnode/lite-fullnode (~30 GB)",
+	},
+}
+
+// Filter returns sources matching the given criteria. Empty values match
+// all (so passing only Network=mainnet returns every mainnet entry).
+type Filter struct {
+	Network  Network
+	DBKind   DBKind
+	DBEngine DBEngine
+	Region   Region
+	Domain   string
+}
+
+// Match returns the sources matching f. Empty fields in f act as wildcards
+// — passing a zero-value Filter returns every entry.
+func Match(f Filter) []Source {
+	out := make([]Source, 0, len(SourceTable))
+	for _, s := range SourceTable {
+		if f.Network != "" && s.Network != f.Network {
+			continue
+		}
+		if f.DBKind != "" && s.DBKind != f.DBKind {
+			continue
+		}
+		if f.DBEngine != "" && s.DBEngine != f.DBEngine {
+			continue
+		}
+		if f.Region != "" && s.Region != f.Region {
+			continue
+		}
+		if f.Domain != "" && s.Domain != f.Domain {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// Pick returns the first source matching f, or nil if none match. Used by
+// the download command to resolve --network/--type/--region into a single
+// concrete mirror without forcing the user to know the IP.
+func Pick(f Filter) *Source {
+	matches := Match(f)
+	if len(matches) == 0 {
+		return nil
+	}
+	return &matches[0]
+}
+
+// LookupDomain returns the source by exact domain match, or nil. Used by
+// `--domain` overrides where the user supplies a specific mirror.
+func LookupDomain(domain string) *Source {
+	for i := range SourceTable {
+		if SourceTable[i].Domain == domain {
+			return &SourceTable[i]
+		}
+	}
+	return nil
+}

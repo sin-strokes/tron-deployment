@@ -1,0 +1,193 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+	"github.com/tronprotocol/tron-deployment/internal/intent"
+	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/render"
+)
+
+var (
+	renderOutputDir  string
+	renderOverlay    string
+	renderNodeFilter int
+)
+
+var renderCmd = &cobra.Command{
+	Use:   "render <intent-path>",
+	Short: "Render configuration from an intent file",
+	Long: `Render HOCON config and docker-compose/systemd files from an intent.
+
+  trond config render foo.yaml                   # all nodes, stdout
+  trond config render foo.yaml --output-dir out  # all nodes, files
+  trond config render foo.yaml --node 1          # only the second node
+  trond config render base.yaml --overlay env.yaml   # merge env on top
+  trond config render foo.yaml -o json           # structured payload`,
+	Args: cobra.ExactArgs(1),
+	RunE: runRender,
+}
+
+func init() {
+	renderCmd.Flags().StringVar(&renderOutputDir, "output-dir", "", "Directory to write rendered files (default: stdout)")
+	renderCmd.Flags().StringVar(&renderOverlay, "overlay", "", "Second intent merged on top of the primary one")
+	renderCmd.Flags().IntVar(&renderNodeFilter, "node", -1, "Render only the node at this index (default: all)")
+}
+
+// renderedNode is what `config render -o json` emits per node. Field
+// names are stable; consumers can rely on missing strings meaning
+// "not produced for this runtime" (e.g. compose stays empty for jar
+// runtime, systemd stays empty for docker).
+type renderedNode struct {
+	Index    int    `json:"index"`
+	NodeName string `json:"name"`
+	Type     string `json:"type"`
+	HOCON    string `json:"hocon"`
+	Compose  string `json:"compose,omitempty"`
+	Systemd  string `json:"systemd,omitempty"`
+	JVMArgs  string `json:"jvm_args"`
+}
+
+func runRender(cmd *cobra.Command, args []string) error {
+	intentPath := args[0]
+	outputFmt, _ := cmd.Flags().GetString("output")
+
+	var parsed *intent.Intent
+	var err error
+	if renderOverlay != "" {
+		parsed, err = intent.LoadWithOverlay(intentPath, renderOverlay)
+	} else {
+		parsed, err = intent.Load(intentPath)
+	}
+	if err != nil {
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
+	}
+
+	// Find templates directory (relative to binary or working directory)
+	templateDir := findTemplateDir()
+
+	rendered := make([]renderedNode, 0, len(parsed.Nodes))
+
+	for i, node := range parsed.Nodes {
+		if renderNodeFilter >= 0 && i != renderNodeFilter {
+			continue
+		}
+		// Render HOCON config
+		hocon, err := render.RenderHOCON(templateDir, parsed, &node)
+		if err != nil {
+			return output.NewError("RENDER_ERROR", output.ExitGeneralError, err.Error())
+		}
+
+		// Render JVM args. Without a live target we can't probe JDK or real
+		// host memory, so we size from the intent's resources.memory and
+		// default to JDK 17 — both are safe static assumptions for the
+		// `config render` preview path.
+		memGB := render.ParseMemoryGB(node.Resources.Memory)
+		if memGB == 0 {
+			memGB = 16
+		}
+		jvmArgs := render.JVMArgsString(memGB, 17, node.JVM)
+
+		// Render runtime artifacts
+		var composeYAML, systemdUnit string
+		if parsed.Target.Runtime == "docker" || parsed.Target.Runtime == "" {
+			composeYAML = render.RenderCompose(parsed.Name, parsed, &node, "", jvmArgs)
+		}
+		if parsed.Target.Runtime == "jar" {
+			systemdUnit = render.RenderSystemdUnit(parsed, &node, jvmArgs, "", "")
+		}
+
+		rendered = append(rendered, renderedNode{
+			Index:    i,
+			NodeName: parsed.Name,
+			Type:     node.Type,
+			HOCON:    hocon,
+			Compose:  composeYAML,
+			Systemd:  systemdUnit,
+			JVMArgs:  jvmArgs,
+		})
+
+		if renderOutputDir != "" && outputFmt != "json" {
+			if err := writeRenderedFiles(renderOutputDir, parsed.Name, hocon, composeYAML, systemdUnit); err != nil {
+				return err
+			}
+		}
+	}
+
+	if outputFmt == "json" {
+		return output.WriteJSON(os.Stdout, map[string]any{
+			"name":    parsed.Name,
+			"network": parsed.Network,
+			"nodes":   rendered,
+		})
+	}
+
+	if renderOutputDir != "" {
+		// Files already written above; nothing else to print.
+		return nil
+	}
+
+	// Text mode: stream each artifact with banner separators.
+	for _, r := range rendered {
+		if r.Index > 0 {
+			fmt.Println("---")
+		}
+		fmt.Printf("# HOCON Config (node %d: %s)\n", r.Index, r.Type)
+		fmt.Println(r.HOCON)
+		if r.Compose != "" {
+			fmt.Println("# docker-compose.yaml")
+			fmt.Println(r.Compose)
+		}
+		if r.Systemd != "" {
+			fmt.Println("# systemd unit")
+			fmt.Println(r.Systemd)
+		}
+	}
+
+	return nil
+}
+
+func writeRenderedFiles(dir, name string, hocon, compose, systemd string) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create output dir: %w", err)
+	}
+
+	configName := fmt.Sprintf("%s.conf", name)
+	if err := os.WriteFile(filepath.Join(dir, configName), []byte(hocon), 0644); err != nil {
+		return fmt.Errorf("write hocon: %w", err)
+	}
+
+	if compose != "" {
+		if err := os.WriteFile(filepath.Join(dir, "docker-compose.yaml"), []byte(compose), 0644); err != nil {
+			return fmt.Errorf("write compose: %w", err)
+		}
+	}
+
+	if systemd != "" {
+		unitName := fmt.Sprintf("tron-%s.service", name)
+		if err := os.WriteFile(filepath.Join(dir, unitName), []byte(systemd), 0644); err != nil {
+			return fmt.Errorf("write systemd: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// findTemplateDir prefers the TROND_TEMPLATES_DIR env var, then falls back to
+// ./templates. An empty return value tells render.RenderHOCON to use the
+// embedded copy — release binaries work without any co-located files.
+func findTemplateDir() string {
+	if d := os.Getenv("TROND_TEMPLATES_DIR"); d != "" {
+		return d
+	}
+	candidates := []string{"templates", "./templates"}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			return c
+		}
+	}
+	return ""
+}

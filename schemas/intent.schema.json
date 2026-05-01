@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/schemas/intent.schema.json",
+  "title": "trond Intent",
+  "description": "Declarative intent file for trond node deployment",
+  "type": "object",
+  "required": ["name", "target", "network", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "description": "Unique node identifier (DNS-label safe)"
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    },
+    "network": {
+      "type": "string",
+      "enum": ["mainnet", "nile", "private"],
+      "description": "TRON network to connect to"
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/NodeSpec"
+      }
+    }
+  },
+  "$defs": {
+    "Target": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["local", "ssh"]
+        },
+        "host": {
+          "type": "string",
+          "description": "Hostname or IP (required for ssh)"
+        },
+        "user": {
+          "type": "string",
+          "description": "SSH username (required for ssh)"
+        },
+        "port": {
+          "type": "integer",
+          "default": 22,
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "identity_file": {
+          "type": "string",
+          "default": "~/.ssh/id_rsa"
+        },
+        "runtime": {
+          "type": "string",
+          "enum": ["docker", "jar"],
+          "default": "docker"
+        },
+        "auto_ports": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, replace every default port with a free OS-allocated port. Essential for parallel test enclaves."
+        }
+      },
+      "if": {
+        "properties": { "type": { "const": "ssh" } }
+      },
+      "then": {
+        "required": ["host", "user"]
+      }
+    },
+    "NodeSpec": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["fullnode", "witness", "solidity", "lite"]
+        },
+        "version": {
+          "type": "string",
+          "default": "latest"
+        },
+        "image": {
+          "type": "string",
+          "default": "tronprotocol/java-tron"
+        },
+        "install_path": {
+          "type": "string",
+          "default": "/opt/tron"
+        },
+        "process_manager": {
+          "type": "string",
+          "enum": ["systemd", "nohup"],
+          "default": "systemd"
+        },
+        "system_user": {
+          "type": "string",
+          "default": "tron"
+        },
+        "witness_key_env": {
+          "type": "string",
+          "description": "Environment variable name containing SR private key (required for witness)"
+        },
+        "features": {
+          "$ref": "#/$defs/Features"
+        },
+        "resources": {
+          "$ref": "#/$defs/Resources"
+        },
+        "jvm": {
+          "$ref": "#/$defs/JVMConfig"
+        },
+        "ports": {
+          "$ref": "#/$defs/PortMapping"
+        },
+        "storage": {
+          "$ref": "#/$defs/Storage"
+        },
+        "restart": {
+          "type": "string",
+          "enum": ["no", "on-failure", "always", "unless-stopped"],
+          "default": "unless-stopped",
+          "description": "docker-compose restart policy; mapped to systemd Restart= for jar runtime"
+        },
+        "extra_env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Arbitrary environment variables to inject into the runtime"
+        },
+        "extra_args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Extra CLI args appended to ./bin/FullNode after -c <conf>"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Docker labels (or recorded in state for jar runtime)"
+        },
+        "network_overrides": { "$ref": "#/$defs/NetworkOverrides" },
+        "witness_key": { "$ref": "#/$defs/WitnessKey" },
+        "config_overrides": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Arbitrary HOCON dotted-key overrides appended to the rendered config"
+        },
+        "networks": { "type": "array", "items": { "type": "string" } },
+        "depends_on": { "type": "array", "items": { "type": "string" } },
+        "healthcheck": { "$ref": "#/$defs/Healthcheck" },
+        "ulimits": { "$ref": "#/$defs/Ulimits" },
+        "extra_hosts": { "type": "object", "additionalProperties": { "type": "string" } },
+        "entrypoint": { "type": "array", "items": { "type": "string" } },
+        "logging": { "$ref": "#/$defs/Logging" },
+        "shm_size": { "type": "string" },
+        "jar": { "$ref": "#/$defs/JarSource" }
+      },
+      "if": {
+        "properties": { "type": { "const": "witness" } }
+      },
+      "then": {
+        "anyOf": [
+          { "required": ["witness_key_env"] },
+          { "required": ["witness_key"] }
+        ]
+      }
+    },
+    "NetworkOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seeds": { "type": "array", "items": { "type": "string" } },
+        "active_peers": { "type": "array", "items": { "type": "string" } },
+        "passive_peers": { "type": "array", "items": { "type": "string" } },
+        "p2p_version": { "type": "integer" },
+        "discovery": { "type": "boolean" },
+        "max_connections": { "type": "integer" },
+        "max_active_same_ip": { "type": "integer" },
+        "need_sync_check": { "type": "boolean" }
+      }
+    },
+    "WitnessKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "private_key_env": { "type": "string", "description": "Env var name holding the raw hex private key" },
+        "keystore_path": { "type": "string", "description": "Path inside container to keystore file" },
+        "keystore_password_env": { "type": "string" },
+        "account_address": { "type": "string", "description": "localWitnessAccountAddress for delegated witness" }
+      }
+    },
+    "Healthcheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test"],
+      "properties": {
+        "test": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "interval": { "type": "string" },
+        "timeout": { "type": "string" },
+        "retries": { "type": "integer" },
+        "start_period": { "type": "string" }
+      }
+    },
+    "Ulimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nofile": { "type": "integer" }
+      }
+    },
+    "Logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "driver": { "type": "string" },
+        "options": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "JarSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where to fetch the FullNode.jar for jar-runtime targets. trond rejects http/file/ftp; sha256 is mandatory whenever url is set.",
+      "required": ["url", "sha256"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "description": "https URL to the jar (http/file/ftp rejected)"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Lowercase 64-char hex SHA256 digest"
+        }
+      }
+    },
+    "Features": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metrics": { "type": "boolean", "default": false },
+        "jsonrpc": { "type": "boolean", "default": false },
+        "rate_limit": { "type": "boolean", "default": true },
+        "event_subscribe": { "type": "boolean", "default": false }
+      }
+    },
+    "Resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory": { "type": "string", "default": "16GB" },
+        "cpu": { "type": "string", "description": "CPU limit, e.g. '2.0' or '500m'" }
+      }
+    },
+    "Storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where to persist chain data and logs. Each field accepts an absolute path (bind-mount) or a bare name (docker named volume). Empty fields default to '<node-name>-data' / '<node-name>-logs'. If 'path' is set, 'data' and 'logs' are auto-derived as '<path>/data' and '<path>/logs'.",
+      "properties": {
+        "data": { "type": "string", "description": "Source for /java-tron/output-directory (chain DB)" },
+        "logs": { "type": "string", "description": "Source for /java-tron/logs" },
+        "path": { "type": "string", "description": "Single host root; data and logs become <path>/data and <path>/logs" }
+      }
+    },
+    "JVMConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "heap_max": { "type": "string" },
+        "heap_new": { "type": "string" },
+        "direct_memory": { "type": "string" },
+        "gc": { "type": "string", "enum": ["G1", "CMS", "auto"], "default": "auto" },
+        "gc_log": { "type": "boolean", "default": false, "description": "Opt-in. Default off so the upstream image's start.sh decides." }
+      }
+    },
+    "PortMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http": { "type": "integer", "default": 8090 },
+        "grpc": { "type": "integer", "default": 50051 },
+        "solidity_http": { "type": "integer", "default": 8091 },
+        "solidity_grpc": { "type": "integer", "default": 50061 },
+        "jsonrpc": { "type": "integer", "default": 8545 },
+        "p2p": { "type": "integer", "default": 18888 },
+        "metrics": { "type": "integer", "default": 9527 }
+      }
+    }
+  }
+}

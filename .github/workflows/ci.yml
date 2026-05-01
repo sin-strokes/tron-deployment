@@ -1,0 +1,105 @@
+name: CI
+
+# CI is split from e2e-test.yml so the fast feedback (lint / unit test /
+# coverage / vuln scan) runs on every PR and push, while the heavier e2e
+# stays on the existing schedule. Each job is independent so a slow scan
+# doesn't block a quick lint failure.
+
+on:
+  push:
+    branches: [master, develop, "00*-*"]
+  pull_request:
+    branches: [master, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    # Lint findings are reported but don't fail the build. The codebase
+    # has ~600 pre-existing lint issues (mostly errcheck on stdout writes
+    # and goimports formatting) that we're addressing in a dedicated
+    # follow-up. New regressions still show up in PR annotations.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      # We compile golangci-lint with the project's own Go toolchain via
+      # GOTOOLCHAIN. Released v1 binaries are pinned to go1.22 in their
+      # module so a pre-built install errors out with "Go language
+      # version used to build golangci-lint is lower than the targeted
+      # Go version" against any project on a newer Go.
+      - name: Install golangci-lint
+        env:
+          GOTOOLCHAIN: go1.25.9
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+      - name: Run golangci-lint
+        run: golangci-lint run --timeout=5m ./...
+
+  test:
+    name: Test + coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: Unit tests with coverage
+        run: |
+          go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -func=coverage.out | tail -1
+      # Codecov upload is optional; only runs when CODECOV_TOKEN secret
+      # is present so forks don't fail the job.
+      - name: Upload coverage
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  govulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  build-matrix:
+    name: Cross-compile
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - { os: linux,  arch: amd64 }
+          - { os: linux,  arch: arm64 }
+          - { os: darwin, arch: amd64 }
+          - { os: darwin, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Build ${{ matrix.target.os }}/${{ matrix.target.arch }}
+        env:
+          GOOS: ${{ matrix.target.os }}
+          GOARCH: ${{ matrix.target.arch }}
+          CGO_ENABLED: "0"
+        run: go build -o /tmp/trond-${{ matrix.target.os }}-${{ matrix.target.arch }} .

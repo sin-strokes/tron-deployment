@@ -1,0 +1,70 @@
+package security
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+// AuditEntry represents a single audit log line.
+type AuditEntry struct {
+	Timestamp  time.Time `json:"timestamp"`
+	Command    string    `json:"command"`
+	Node       string    `json:"node,omitempty"`
+	Target     string    `json:"target"`
+	IntentHash string    `json:"intent_hash,omitempty"`
+	Result     string    `json:"result"`
+	DurationMs int64     `json:"duration_ms"`
+	ErrorCode  string    `json:"error_code,omitempty"`
+}
+
+// AuditLog writes append-only JSONL entries to the audit log file.
+type AuditLog struct {
+	path string
+	mu   sync.Mutex
+}
+
+// NewAuditLog creates an audit log writer. If path is empty, defaults to ~/.trond/audit.log.
+func NewAuditLog(path string) (*AuditLog, error) {
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("get home dir: %w", err)
+		}
+		path = filepath.Join(home, ".trond", "audit.log")
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("create audit dir: %w", err)
+	}
+
+	return &AuditLog{path: path}, nil
+}
+
+// Write appends an audit entry to the log.
+func (a *AuditLog) Write(entry AuditEntry) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if entry.Timestamp.IsZero() {
+		entry.Timestamp = time.Now().UTC()
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal audit entry: %w", err)
+	}
+
+	f, err := os.OpenFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("open audit log: %w", err)
+	}
+	defer f.Close()
+
+	_, err = f.Write(append(data, '\n'))
+	return err
+}
