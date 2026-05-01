@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 )
@@ -57,8 +58,8 @@ container_ip when available, runtime, version, status.`,
 }
 
 var (
-	inspectAll      bool
-	inspectNetwork  string
+	inspectAll        bool
+	inspectNetwork    string
 	inspectLabelFlags []string
 )
 

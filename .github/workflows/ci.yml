@@ -18,11 +18,10 @@ jobs:
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
-    # Lint findings are reported but don't fail the build. The codebase
-    # has ~600 pre-existing lint issues (mostly errcheck on stdout writes
-    # and goimports formatting) that we're addressing in a dedicated
-    # follow-up. New regressions still show up in PR annotations.
-    continue-on-error: true
+    # Lint blocks the PR. .golangci.yml excludes patterns we've decided
+    # are noise (errcheck on fmt.Fprint*, defer Close on cleanup paths,
+    # gocritic style nags). Real issues — unused vars, ineffective
+    # assignments, real errcheck on actionable returns — still fail.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

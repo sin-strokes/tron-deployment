@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The agent-ergonomics arc lands across four sequenced PRs:
+**#151** (CLI core + AGENTS.md) → **#152** (`trond schema`) →
+**#153** (`trond mcp`) → **#154** (`trond recipe`).
+
 ### Added
-- `trond mcp` — Model Context Protocol server. Speaks JSON-RPC over
+- (#154) `trond recipe list / show / run` — declarative multi-step
+  workflow runner. Recipes are YAML files in `recipes/*.yaml` (also
+  embedded via go:embed) that codify the canonical AGENTS.md
+  workflows: deploy fresh node, deploy with snapshot, upgrade with
+  auto-rollback, recover failed upgrade, destroy private network.
+  The runner re-execs the trond binary for each step, captures JSON
+  output, and feeds named fields forward via
+  `{{ steps.<id>.<field> }}` substitution. Per-step `on_failure:
+  abort | continue | rollback` controls failure semantics; rollback
+  steps run as best-effort cleanup. Five recipes ship; adding more
+  is one YAML file each.
+- (#153) `trond mcp` — Model Context Protocol server. Speaks JSON-RPC over
   stdio so chat-based / IDE-embedded agents (Claude Desktop, Cursor,
   Cline, Continue.dev, Zed AI, ChatGPT Apps) can call trond
   capabilities as structured tools without shelling out. Registers
@@ -22,27 +37,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementations. Server Instructions field injects AGENTS.md-style
   workflow guidance so the LLM picks up context without the user
   pasting it.
-- `trond schema [command]` — dumps the entire CLI surface as a JSON
+- (#152) `trond schema [command]` — dumps the entire CLI surface as a JSON
   manifest: every command, flag, type, default, plus the JSON Schema
   for each command's `--output json` result. Top-level
   `schema_version` for clients to pin against. With a positional arg
   the dump narrows to that command; with `--output-only` to just its
   output schema, suitable for piping into a JSON Schema validator.
-- 21 JSON Schema files under `schemas/output/*.schema.json` covering
+- (#152) 21 JSON Schema files under `schemas/output/*.schema.json` covering
   every command that supports `-o json`: apply, plan, status, list,
   inspect, diagnose, health, verify, preflight, doctor, version,
   events, config validate/render, network create/status,
   snapshot sources/list/download/jobs, plus a shared error envelope.
   All draft-2020-12; canonical `$id` URLs match repo paths so offline
   validators resolve $refs without network.
-- `AGENTS.md` at repo root — machine-readable contract for AI agents
+- (#151) `AGENTS.md` at repo root — machine-readable contract for AI agents
   that CALL trond (distinct from `CLAUDE.md` which targets agents
   EDITING this repo). Covers the JSON output convention, exit-code
   semantics with retry strategy per code, four core workflows
   (deploy / diagnose / snapshot / private network) with command
   chains and field-level expectations, concurrency isolation via
   `TROND_STATE_DIR`, anti-patterns. Linked from README and CLAUDE.md.
-- Release signatures via Sigstore cosign keyless OIDC. `checksums.txt`
+- (#151) Release signatures via Sigstore cosign keyless OIDC. `checksums.txt`
   is signed at release time using the GitHub Actions workflow's
   short-lived OIDC token; the resulting `.sig` and `.pem` ship as
   release artifacts and the signing event is recorded in Rekor. No
@@ -50,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in README ("Verifying a release") and `trond knowledge
   release-signatures` (long-form: what keyless OIDC proves vs.
   doesn't, alternatives table, SLSA upgrade path, common errors).
-- `trond snapshot` — chain-database snapshot subsystem (mainnet ×6 + nile
+- (#151) `trond snapshot` — chain-database snapshot subsystem (mainnet ×6 + nile
   mirrors). Streams the upstream `.tgz` through gunzip + tar in one
   pipeline, never writing the archive to disk. HEAD probe + `Statfs` verify
   free space before any GET; existing `output-directory/database` refuses

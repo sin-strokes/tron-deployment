@@ -422,11 +422,40 @@ clients prompt the user. The server's `Instructions` field
 auto-injects guidance about the canonical workflows so the LLM picks
 up AGENTS.md context without the user having to paste it.
 
-Coming next:
+## Recipes — pre-built multi-step playbooks
 
-- `trond recipe list/run` — pre-built multi-step playbooks for common
-  workflows (deploy + snapshot, rotate witness key, recover failed
-  upgrade, etc.).
+Five canonical multi-step workflows from the sections above are
+codified as declarative YAML in `recipes/*.yaml` and run via:
+
+```bash
+trond recipe list                                   # everything available
+trond recipe show <name>                            # YAML + params + steps
+trond recipe run <name> --param key=value [...]     # execute end-to-end
+trond recipe run <name> ... --dry-run               # print resolved chain, no exec
+trond recipe run <name> ... --resume-from <step>    # skip ahead after a partial run
+```
+
+The runner re-execs the trond binary itself for each step (no shell
+dependency beyond `exec`), captures stdout JSON, and feeds named
+fields forward via `{{ steps.<id>.<field> }}` substitution. Steps
+declare `on_failure: abort | continue | rollback`; rollback steps
+run as a best-effort cleanup pass when triggered.
+
+Shipped recipes:
+
+| Name | What it does |
+|---|---|
+| `nile-test-fullnode` | validate → preflight → apply --wait → verify (4 steps; smoke-test workflow) |
+| `fresh-mainnet-fullnode-with-snapshot` | validate → preflight → snapshot download → apply --wait → verify, with rollback to stop the failed node (5 steps) |
+| `upgrade-with-verify` | snapshot status → upgrade → verify, with auto-rollback on verify failure (3 steps + 1 rollback) |
+| `recover-failed-upgrade` | diagnose → rollback → status, for post-upgrade triage (3 steps) |
+| `destroy-private-network-cleanly` | network status → network destroy with confirm gate (2 steps) |
+
+For an MCP-driven agent, "run a recipe" is a single tool call that
+encapsulates 3–5 underlying tool calls and the failure / rollback
+state machine. For a CI pipeline, it replaces a 30-line bash script
+with one declarative file. For a human at a terminal, it documents
+the canonical workflow as runnable code.
 
 ---
 

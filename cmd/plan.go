@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/render"
@@ -177,4 +178,3 @@ func printPlanText(result map[string]any, changes []planChange) {
 		fmt.Printf("\nEstimated downtime: %ds\n", dt)
 	}
 }
-

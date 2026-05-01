@@ -1,0 +1,42 @@
+name: destroy-private-network-cleanly
+description: |
+  Tear down a multi-node private network created via `trond network
+  create`. The status-check step is informational only — if the
+  network is already gone, status-check fails but on_failure=continue
+  lets the recipe proceed. The destroy step that follows then fails
+  loudly with NETWORK_NOT_FOUND, which is the correct signal the
+  recipe was called with a name that doesn't exist.
+
+  Use this for clean test cleanup. For CI cleanup hooks where you
+  want to ignore "already destroyed", call `trond network destroy
+  --confirm <name>` directly and tolerate exit 1.
+
+params:
+  - name: network
+    type: string
+    required: true
+    description: |
+      Name of the private network (matches the intent's name field
+      that was used with `trond network create`).
+
+steps:
+  - id: status-check
+    description: |
+      Confirm the network exists. on_failure=continue so an
+      already-destroyed network just falls through to the destroy
+      step (which itself is idempotent).
+    command: network status
+    args:
+      - "{{ params.network }}"
+    on_failure: continue
+
+  - id: destroy
+    description: |
+      Stop every node, remove containers, drop docker volumes. The
+      --confirm value MUST match the network name (typo guard).
+    command: network destroy
+    args:
+      - "{{ params.network }}"
+      - --confirm
+      - "{{ params.network }}"
+    on_failure: abort

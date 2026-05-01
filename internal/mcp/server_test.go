@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 )
 

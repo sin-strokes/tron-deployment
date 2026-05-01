@@ -1,0 +1,96 @@
+name: fresh-mainnet-fullnode-with-snapshot
+description: |
+  Deploy a fresh mainnet fullnode that starts already-caught-up by
+  pre-staging the chain database from an official snapshot. Without
+  this recipe, mainnet sync from genesis takes days.
+
+  The snapshot download is the long pole (multi-hour for a lite snap,
+  longer for full). It runs in detached mode so the caller can poll
+  via `trond snapshot jobs` or just walk away. Once the download is
+  complete, `apply` is a near-instant operation because the chain DB
+  is already on disk.
+
+params:
+  - name: intent_path
+    type: path
+    required: true
+    description: |
+      Mainnet intent.yaml whose storage.data points at
+      <snapshot_dest>/output-directory. See
+      examples/mainnet-fullnode-snapshot.yaml.
+  - name: snapshot_dest
+    type: path
+    required: true
+    description: |
+      Host directory the snapshot extracts into. Needs ~250 GB free for
+      a lite snap, ~5 TB for a full archive.
+  - name: snapshot_kind
+    type: string
+    default: lite
+    description: lite (default, ~50 GB) | full (archive, ~2 TB)
+
+steps:
+  - id: validate
+    command: config validate
+    args:
+      - "{{ params.intent_path }}"
+    on_failure: abort
+
+  - id: preflight
+    command: preflight
+    args:
+      - --intent
+      - "{{ params.intent_path }}"
+    on_failure: abort
+
+  - id: download-snapshot
+    description: |
+      Stream the chain DB tarball through gunzip + tar in one pipeline,
+      MD5-verifying inline. Refuses overwrite of an existing DB unless
+      the user explicitly invokes with --force (not in this recipe; if
+      a previous half-snap exists, clean it manually first).
+    command: snapshot download
+    args:
+      - --network
+      - mainnet
+      - --type
+      - "{{ params.snapshot_kind }}"
+      - --to
+      - "{{ params.snapshot_dest }}"
+    on_failure: abort
+
+  - id: apply
+    description: |
+      With the chain DB pre-staged, apply is seconds-fast. --wait
+      blocks until HTTP responds; --wait-timeout high because cold-start
+      java-tron can take a couple minutes to open RocksDB and start RPC.
+    command: apply
+    args:
+      - --intent
+      - "{{ params.intent_path }}"
+      - --auto-approve
+      - --wait
+      - --wait-timeout
+      - 10m
+    persist:
+      - name
+      - endpoints
+    on_failure: rollback
+
+  - id: verify
+    command: verify
+    args:
+      - --intent
+      - "{{ params.intent_path }}"
+      - --timeout
+      - 5m
+    on_failure: abort
+
+# Rollback runs only when the apply step fails. We don't roll back the
+# snapshot — it's expensive to redo and harmless to leave on disk.
+rollback:
+  - id: stop-failed-node
+    command: stop
+    args:
+      - "{{ steps.apply.name }}"
+    on_failure: continue
