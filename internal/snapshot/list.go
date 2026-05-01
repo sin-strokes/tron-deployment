@@ -50,7 +50,7 @@ func LatestBackup(ctx context.Context, s Source) (string, error) {
 // listings are simple Apache `<a href>` tables and a tiny parser keeps
 // this package free of new deps.
 func listFromHTMLIndex(ctx context.Context, baseURL string) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/", http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}

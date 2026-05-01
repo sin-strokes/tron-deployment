@@ -26,7 +26,8 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
+    formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
@@ -37,6 +38,28 @@ archives:
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
+
+# Sign the checksums file (and therefore, transitively, every artifact
+# whose hash is listed in it) with cosign keyless OIDC. The release
+# workflow installs cosign and runs against the GitHub OIDC token so no
+# long-lived signing key needs to be stored. Verify locally with:
+#   cosign verify-blob \
+#     --certificate checksums.txt.pem \
+#     --signature checksums.txt.sig \
+#     --certificate-identity-regexp '.+@github\.com' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     checksums.txt
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - ${artifact}
+    artifacts: checksum
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"

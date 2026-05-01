@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/snapshot"
@@ -286,4 +287,3 @@ func humanGB(n uint64) string {
 	}
 	return fmt.Sprintf("%.2f GB", float64(n)/float64(GB))
 }
-

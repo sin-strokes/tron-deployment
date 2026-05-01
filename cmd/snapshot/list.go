@@ -5,16 +5,17 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/snapshot"
 )
 
 var (
-	listNetwork  string
-	listDomain   string
-	listKind     string
-	listRegion   string
-	listEngine   string
+	listNetwork string
+	listDomain  string
+	listKind    string
+	listRegion  string
+	listEngine  string
 )
 
 var listCmd = &cobra.Command{

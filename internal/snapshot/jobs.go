@@ -20,10 +20,10 @@ import (
 // rewrites racing with the worker. Callers who want progress read the
 // log file directly (which is line-oriented and append-only).
 type Job struct {
-	ID        string    `json:"id"`         // e.g. "20260427-153012-abcd"
+	ID        string    `json:"id"` // e.g. "20260427-153012-abcd"
 	PID       int       `json:"pid"`
 	StartedAt time.Time `json:"started_at"`
-	Args      []string  `json:"args"`       // exact argv (sans --detach) used to launch
+	Args      []string  `json:"args"` // exact argv (sans --detach) used to launch
 	LogPath   string    `json:"log_path"`
 	DestDir   string    `json:"dest_dir"`
 	Backup    string    `json:"backup"`
@@ -35,10 +35,10 @@ type Job struct {
 // manifest plus a kill(0) probe of the PID.
 type JobStatus struct {
 	Job
-	Running    bool   `json:"running"`
-	Finished   bool   `json:"finished"`            // process gone, log present
-	ExitNote   string `json:"exit_note,omitempty"` // last log line if not running
-	LogSize    int64  `json:"log_size_bytes"`
+	Running    bool      `json:"running"`
+	Finished   bool      `json:"finished"`            // process gone, log present
+	ExitNote   string    `json:"exit_note,omitempty"` // last log line if not running
+	LogSize    int64     `json:"log_size_bytes"`
 	LogModTime time.Time `json:"log_mod_time"`
 }
 

@@ -75,15 +75,15 @@ type DownloadOptions struct {
 // PreflightResult summarises what Download is about to do — surfaced via
 // `trond snapshot download --dry-run`.
 type PreflightResult struct {
-	URL              string `json:"url"`
-	MD5URL           string `json:"md5_url,omitempty"`
-	ExpectedSize     int64  `json:"expected_size_bytes"`
-	FreeBytes        uint64 `json:"free_bytes"`
-	NeededBytes      uint64 `json:"needed_bytes"`
-	UserdataPresent  bool   `json:"userdata_present"`
-	DatabasePresent  bool   `json:"database_present"`
-	WouldOverwrite   bool   `json:"would_overwrite"`
-	HasMD5Sidecar    bool   `json:"has_md5_sidecar"`
+	URL             string `json:"url"`
+	MD5URL          string `json:"md5_url,omitempty"`
+	ExpectedSize    int64  `json:"expected_size_bytes"`
+	FreeBytes       uint64 `json:"free_bytes"`
+	NeededBytes     uint64 `json:"needed_bytes"`
+	UserdataPresent bool   `json:"userdata_present"`
+	DatabasePresent bool   `json:"database_present"`
+	WouldOverwrite  bool   `json:"would_overwrite"`
+	HasMD5Sidecar   bool   `json:"has_md5_sidecar"`
 }
 
 // DownloadResult is what Download returns on success.
@@ -116,7 +116,7 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 
 	// HEAD for size. We tolerate a missing Content-Length (some mirrors
 	// don't send it) but report 0 so callers can warn.
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 	// back to a download-only flow with the verification flag flipped.
 	md5URL := MD5URL(opts.Source, opts.Backup, opts.Kind)
 	r.MD5URL = md5URL
-	if md5Req, err := http.NewRequestWithContext(ctx, http.MethodHead, md5URL, nil); err == nil {
+	if md5Req, err := http.NewRequestWithContext(ctx, http.MethodHead, md5URL, http.NoBody); err == nil {
 		if md5Resp, err := client.Do(md5Req); err == nil {
 			md5Resp.Body.Close()
 			r.HasMD5Sidecar = md5Resp.StatusCode == http.StatusOK
@@ -185,21 +185,21 @@ func Preflight(ctx context.Context, opts DownloadOptions) (*PreflightResult, err
 // a discardable cache.
 func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error) {
 	if opts.DestDir == "" {
-		return nil, errors.New("DestDir is required")
+		return nil, errors.New("dest dir is required")
 	}
 	if opts.Backup == "" {
-		return nil, errors.New("Backup is required")
+		return nil, errors.New("backup is required")
 	}
 
 	pre, err := Preflight(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	if pre.UserdataPresent {
-		// userdata holds witness keys / persisted operator state. We
-		// extract around it (the snapshot tarball doesn't ship userdata)
-		// but flag the situation so callers can show a reassuring note.
-	}
+	// pre.UserdataPresent is intentionally not acted on here — the
+	// snapshot tarball's top-level layout never overlaps with userdata/,
+	// so extraction leaves witness keys / operator state untouched. The
+	// flag is surfaced in PreflightResult so the cmd layer can show a
+	// reassuring note in the human-readable output.
 	if pre.DatabasePresent && !opts.Force {
 		return nil, &OverwriteError{
 			Path:    databasePath(opts.DestDir),
@@ -234,7 +234,7 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 
 	start := time.Now()
 	url := pre.URL
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func Download(ctx context.Context, opts DownloadOptions) (*DownloadResult, error
 		return nil, fmt.Errorf("GET %s: HTTP %d", url, resp.StatusCode)
 	}
 
-	hasher := md5.New() //nolint:gosec
+	hasher := md5.New() //nolint:gosec // matches upstream .md5sum sidecar format; integrity, not crypto
 	progress := &progressReader{
 		r:     resp.Body,
 		total: resp.ContentLength,
@@ -421,7 +421,7 @@ func (e *OverwriteError) Error() string { return e.Message }
 // Helpers ----------------------------------------------------------------
 
 func fetchSmall(ctx context.Context, client *http.Client, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +467,7 @@ func freeBytes(path string) (uint64, error) {
 	}
 	// Bavail (rather than Bfree) honours per-user quotas / reserved
 	// blocks, matching what `df` shows.
-	return uint64(st.Bavail) * uint64(st.Bsize), nil
+	return st.Bavail * uint64(st.Bsize), nil
 }
 
 func fs(mode int64) os.FileMode {

@@ -35,8 +35,8 @@ func spawnDetached(outputFmt string, src *snapshot.Source, backup, dest string) 
 	// EvalSymlinks so a Homebrew/symlinked install doesn't restart via
 	// a path the kernel may later evict. Failure is non-fatal — fall
 	// back to the original.
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
 	}
 
 	jobsDir := paths.SnapshotJobs()

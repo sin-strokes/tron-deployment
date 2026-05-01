@@ -2,6 +2,8 @@ module github.com/tronprotocol/tron-deployment
 
 go 1.25.0
 
+toolchain go1.25.9
+
 require (
 	github.com/go-playground/validator/v10 v10.30.2
 	github.com/spf13/cobra v1.10.2
