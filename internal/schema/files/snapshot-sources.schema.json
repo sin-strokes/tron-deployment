@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/snapshot-sources.schema.json",
+  "title": "trond snapshot sources output",
+  "type": "object",
+  "required": ["sources"],
+  "properties": {
+    "sources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/source" }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["network", "kind", "engine", "domain", "base_url"],
+      "properties": {
+        "network":          { "type": "string", "enum": ["mainnet", "nile"] },
+        "kind":             { "type": "string", "enum": ["lite", "full"] },
+        "engine":           { "type": "string", "enum": ["leveldb", "rocksdb"] },
+        "region":           { "type": "string", "enum": ["singapore", "america"] },
+        "domain":           { "type": "string" },
+        "base_url":         { "type": "string", "format": "uri" },
+        "approx_size_gb":   { "type": "integer", "minimum": 1 },
+        "description":      { "type": "string" }
+      }
+    }
+  }
+}

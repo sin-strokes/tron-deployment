@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/plan.schema.json",
+  "title": "trond plan output",
+  "description": "Returned by `trond plan --intent ... -o json`. Preview of what apply WOULD do without performing the action.",
+  "type": "object",
+  "required": ["name", "current_state", "desired_state", "changes"],
+  "properties": {
+    "name":          { "type": "string" },
+    "current_state": {
+      "type": "string",
+      "description": "Current managed-node status from state.json, or 'not_deployed' when no record exists.",
+      "examples": ["not_deployed", "running", "stopped", "error"]
+    },
+    "desired_state": {
+      "type": "string",
+      "enum": ["running"],
+      "description": "Always 'running'; trond's apply target is a running node."
+    },
+    "changes": {
+      "type": "array",
+      "description": "List of diffs between intent and state. Empty array means apply would be a no-op.",
+      "items": {
+        "type": "object",
+        "required": ["type", "field"],
+        "properties": {
+          "type": { "type": "string", "enum": ["create", "update", "delete"] },
+          "field": {
+            "type": "string",
+            "description": "Top-level field that changed: node | intent | config | version",
+            "examples": ["node", "intent", "config", "version"]
+          },
+          "from": { "description": "Old value; absent for type=create." },
+          "to":   { "description": "New value; absent for type=delete." },
+          "restart_required": {
+            "type": "boolean",
+            "description": "Whether applying this change will restart the running container."
+          }
+        }
+      }
+    },
+    "destructive": {
+      "type": "boolean",
+      "description": "True if applying would destroy data (volume removal, version downgrade with incompatible state). Caller should require user confirmation."
+    },
+    "estimated_downtime_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Approximate seconds the node will be down during apply; 0 for no_change paths."
+    },
+    "runtime": { "type": "string", "enum": ["docker", "jar"] },
+    "network": { "type": "string", "examples": ["mainnet", "nile", "private"] }
+  }
+}

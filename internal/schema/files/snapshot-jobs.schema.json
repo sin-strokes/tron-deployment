@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/snapshot-jobs.schema.json",
+  "title": "trond snapshot jobs output",
+  "type": "object",
+  "required": ["jobs"],
+  "properties": {
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "pid", "started_at", "log_path", "running"],
+        "properties": {
+          "id":            { "type": "string", "examples": ["20260501-103300-abc1"] },
+          "pid":           { "type": "integer", "minimum": 1 },
+          "started_at":    { "type": "string", "format": "date-time" },
+          "log_path":      { "type": "string" },
+          "dest_dir":      { "type": "string" },
+          "backup":        { "type": "string" },
+          "network":       { "type": "string", "enum": ["mainnet", "nile"] },
+          "kind":          { "type": "string", "enum": ["lite", "full"] },
+          "running":       { "type": "boolean" },
+          "finished":      { "type": "boolean", "description": "True when the process is gone and a log was found." },
+          "exit_note":     { "type": "string", "description": "Last log line; surfaces error message after a stopped job." },
+          "log_size_bytes":{ "type": "integer", "minimum": 0 },
+          "log_mod_time":  { "type": "string", "format": "date-time" },
+          "args":          { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

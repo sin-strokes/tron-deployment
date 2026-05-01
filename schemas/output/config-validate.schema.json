@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/config-validate.schema.json",
+  "title": "trond config validate output",
+  "description": "Returned by `trond config validate <intent.yaml> -o json`. On invalid input the error envelope (error.schema.json) is returned with exit_code=2.",
+  "type": "object",
+  "required": ["valid"],
+  "properties": {
+    "valid":      { "type": "boolean" },
+    "name":       { "type": "string" },
+    "network":    { "type": "string", "enum": ["mainnet", "nile", "private"] },
+    "node_count": { "type": "integer", "minimum": 1 },
+    "explanation": {
+      "type": "object",
+      "description": "Present when --explain was passed; per-field breakdown showing explicit values, defaults, and derived JVM heap.",
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/health.schema.json",
+  "title": "trond health output",
+  "description": "Returned by `trond health <node> -o json`. Single-shot HTTP probe of the node's API; lighter than diagnose.",
+  "type": "object",
+  "required": ["name", "healthy"],
+  "properties": {
+    "name":     { "type": "string" },
+    "healthy":  {
+      "type": "boolean",
+      "description": "True if the HTTP API responded 2xx within the timeout."
+    },
+    "block_height": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "endpoint": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL that was probed."
+    },
+    "latency_ms": {
+      "type": "integer",
+      "description": "Request round-trip in milliseconds; absent on failure."
+    },
+    "error": {
+      "type": "string",
+      "description": "Set when healthy=false; describes the probe failure."
+    }
+  }
+}

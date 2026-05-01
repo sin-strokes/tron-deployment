@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/preflight.schema.json",
+  "title": "trond preflight output",
+  "description": "Returned by `trond preflight --intent ... -o json`. Verifies target readiness before apply.",
+  "type": "object",
+  "required": ["target", "overall", "checks"],
+  "properties": {
+    "target": {
+      "type": "string",
+      "enum": ["local", "ssh"],
+      "description": "Resolved target type from intent.target.type."
+    },
+    "host": {
+      "type": "string",
+      "description": "Set when target=ssh."
+    },
+    "overall": {
+      "type": "string",
+      "enum": ["pass", "warning", "fail"]
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name":    {
+            "type": "string",
+            "examples": [
+              "ssh_reachable",
+              "docker_installed",
+              "docker_compose_installed",
+              "java_installed",
+              "memory",
+              "disk_space",
+              "ports_available"
+            ]
+          },
+          "status":  { "type": "string", "enum": ["pass", "warning", "fail"] },
+          "message": { "type": "string" },
+          "suggestions": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

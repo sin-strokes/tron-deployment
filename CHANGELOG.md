@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `trond schema [command]` — dumps the entire CLI surface as a JSON
+  manifest: every command, flag, type, default, plus the JSON Schema
+  for each command's `--output json` result. Top-level
+  `schema_version` for clients to pin against. With a positional arg
+  the dump narrows to that command; with `--output-only` to just its
+  output schema, suitable for piping into a JSON Schema validator.
+- 21 JSON Schema files under `schemas/output/*.schema.json` covering
+  every command that supports `-o json`: apply, plan, status, list,
+  inspect, diagnose, health, verify, preflight, doctor, version,
+  events, config validate/render, network create/status,
+  snapshot sources/list/download/jobs, plus a shared error envelope.
+  All draft-2020-12; canonical `$id` URLs match repo paths so offline
+  validators resolve $refs without network.
 - `AGENTS.md` at repo root — machine-readable contract for AI agents
   that CALL trond (distinct from `CLAUDE.md` which targets agents
   EDITING this repo). Covers the JSON output convention, exit-code

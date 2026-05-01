@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/error.schema.json",
+  "title": "trond error envelope",
+  "description": "Universal error shape returned by any trond command on non-zero exit when --output json is set. Stable across all commands; agents can rely on these fields existing.",
+  "type": "object",
+  "required": ["error_code", "exit_code", "message"],
+  "properties": {
+    "error_code": {
+      "type": "string",
+      "description": "Stable machine-readable code. Examples: VALIDATION_ERROR, TARGET_UNREACHABLE, PREFLIGHT_FAILED, HUMAN_REQUIRED, NODE_NOT_FOUND, RENDER_ERROR, DOWNLOAD_ERROR.",
+      "examples": ["VALIDATION_ERROR", "HUMAN_REQUIRED", "NODE_NOT_FOUND"]
+    },
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 125,
+      "description": "Process exit code. 0=success, 1=general, 2=validation, 3=target unreachable, 4=preflight failure, 10=human required."
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable error description. Not stable across versions; agents should match on error_code, not message text."
+    },
+    "suggestions": {
+      "type": "array",
+      "description": "Ordered remediation hints, most-likely-fix first. Agents should attempt suggestions[0] before asking the user.",
+      "items": { "type": "string" }
+    },
+    "details": {
+      "type": "object",
+      "description": "Optional command-specific structured context (e.g., which intent field failed validation).",
+      "additionalProperties": true
+    }
+  }
+}

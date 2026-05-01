@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/apply.schema.json",
+  "title": "trond apply output",
+  "description": "Returned by `trond apply --intent ... -o json`. Describes the deployment outcome and the live endpoints, when --wait succeeded.",
+  "type": "object",
+  "required": ["name", "result"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The intent.name, also the managed-node identifier in state.json."
+    },
+    "result": {
+      "type": "string",
+      "enum": ["created", "updated", "no_change"],
+      "description": "no_change means the intent matches what's already deployed (idempotent re-run); created on first apply; updated when the intent or its rendered config differs from state and --auto-approve was passed."
+    },
+    "intent_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA256 of the intent file contents. Used by the next apply to detect changes."
+    },
+    "config_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA256 of the rendered HOCON config. Same intent → same config_hash unless template changed."
+    },
+    "endpoints": {
+      "type": "object",
+      "description": "Live API endpoints exposed by the running container. Keys vary by node type and which features are enabled.",
+      "properties": {
+        "http":     { "type": "string", "format": "uri", "examples": ["http://127.0.0.1:8090"] },
+        "grpc":     { "type": "string",                  "examples": ["127.0.0.1:50051"] },
+        "jsonrpc":  { "type": "string", "format": "uri" },
+        "metrics":  { "type": "string", "format": "uri" },
+        "p2p":      { "type": "string" }
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Apply wall-clock time in milliseconds (excludes --wait polling)."
+    },
+    "waited_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wait wall-clock time when --wait was passed; only present when --wait was set."
+    },
+    "ready": {
+      "type": "boolean",
+      "description": "True if --wait was set AND the node's HTTP API responded before the timeout. Absent when --wait was not requested."
+    },
+    "wait_error": {
+      "type": "string",
+      "description": "Set when --wait timed out or the probe failed. Apply itself succeeded; the node was deployed but did not become ready in time. Caller should call `trond diagnose <name>` to investigate."
+    },
+    "version": {
+      "type": "string",
+      "description": "Resolved java-tron image / jar version that got deployed."
+    },
+    "runtime": {
+      "type": "string",
+      "enum": ["docker", "jar"],
+      "description": "Which runtime was selected based on intent.target.runtime."
+    }
+  },
+  "additionalProperties": false
+}

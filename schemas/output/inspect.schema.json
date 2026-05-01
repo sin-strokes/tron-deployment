@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/inspect.schema.json",
+  "title": "trond inspect output",
+  "description": "Returned by `trond inspect [node]`, `trond inspect --network <p>`, or `trond inspect --all`. Manifest of endpoints and runtime info usable as test-harness fixtures.",
+  "type": "object",
+  "required": ["nodes"],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name":         { "type": "string" },
+          "status":       { "type": "string" },
+          "runtime":      { "type": "string", "enum": ["docker", "jar"] },
+          "endpoints": {
+            "type": "object",
+            "properties": {
+              "http":     { "type": "string", "format": "uri" },
+              "grpc":     { "type": "string" },
+              "p2p":      { "type": "string" },
+              "metrics":  { "type": "string", "format": "uri" },
+              "jsonrpc":  { "type": "string", "format": "uri" }
+            },
+            "additionalProperties": { "type": "string" }
+          },
+          "container_ip": {
+            "type": "string",
+            "description": "Internal docker network IP of the container; absent for jar runtime."
+          },
+          "container_id": { "type": "string" },
+          "labels":       { "type": "object", "additionalProperties": { "type": "string" } },
+          "network":      { "type": "string" }
+        }
+      }
+    }
+  }
+}

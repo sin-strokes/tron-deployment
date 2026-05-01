@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/snapshot-download.schema.json",
+  "title": "trond snapshot download output",
+  "description": "Returned by `trond snapshot download ... -o json`. Three variants: dry-run plan, foreground completion result, or detached job manifest.",
+  "oneOf": [
+    {
+      "$comment": "Dry-run plan",
+      "required": ["preflight", "source", "backup", "dest"],
+      "properties": {
+        "preflight": { "$ref": "#/$defs/preflight" },
+        "source":    { "type": "object" },
+        "backup":    { "type": "string" },
+        "dest":      { "type": "string" }
+      }
+    },
+    {
+      "$comment": "Foreground completion",
+      "required": ["bytes_downloaded", "files_extracted", "duration_ms", "actual_md5", "dest"],
+      "properties": {
+        "bytes_downloaded": { "type": "integer", "minimum": 0 },
+        "files_extracted":  { "type": "integer", "minimum": 0 },
+        "duration_ms":      { "type": "integer", "minimum": 0 },
+        "actual_md5":       { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "expected_md5":     { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "md5_verified":     { "type": "boolean" },
+        "dest":             { "type": "string" },
+        "userdata_present": { "type": "boolean" },
+        "source":           { "type": "object" },
+        "backup":           { "type": "string" }
+      }
+    },
+    {
+      "$comment": "Detached job manifest",
+      "required": ["job_id", "pid", "log_path"],
+      "properties": {
+        "job_id":   { "type": "string" },
+        "pid":      { "type": "integer", "minimum": 1 },
+        "log_path": { "type": "string" },
+        "dest":     { "type": "string" },
+        "backup":   { "type": "string" },
+        "network":  { "type": "string" },
+        "kind":     { "type": "string", "enum": ["lite", "full"] }
+      }
+    }
+  ],
+  "$defs": {
+    "preflight": {
+      "type": "object",
+      "properties": {
+        "url":                 { "type": "string", "format": "uri" },
+        "md5_url":             { "type": "string", "format": "uri" },
+        "expected_size_bytes": { "type": "integer", "minimum": 0 },
+        "free_bytes":          { "type": "integer", "minimum": 0 },
+        "needed_bytes":        { "type": "integer", "minimum": 0 },
+        "userdata_present":    { "type": "boolean" },
+        "database_present":    { "type": "boolean" },
+        "would_overwrite":     { "type": "boolean" },
+        "has_md5_sidecar":     { "type": "boolean" }
+      }
+    }
+  }
+}

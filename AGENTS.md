@@ -367,12 +367,26 @@ topic; don't paraphrase from training data.
 
 ---
 
-## Schema discovery (when implemented)
+## Schema discovery
 
-`trond schema [-o json]` will dump the full command tree + flag types
-+ output JSON Schemas as one machine-readable manifest. Until then,
-this file plus the CLAUDE.md "AI Agent Guide" + `trond knowledge` are
-the canonical sources. Watch for:
+`trond schema [-o json]` dumps the full command tree + flag types +
+output JSON Schemas as one machine-readable manifest. Pin against the
+top-level `schema_version` field for stability.
+
+```bash
+# Full manifest (every command, every flag, every documented schema)
+trond schema -o json | jq '.schema_version, (.commands | length)'
+
+# One command's spec
+trond schema apply -o json
+trond schema "snapshot download" -o json
+
+# Just the output JSON Schema for one command (useful for agent input
+# validation when piping trond's output through `ajv` or similar)
+trond schema apply --output-only -o json
+```
+
+Coming next:
 
 - `trond mcp` — Model Context Protocol server for IDE / chat-based
   agents that can't shell out.

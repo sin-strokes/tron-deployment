@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/network-create.schema.json",
+  "title": "trond network create output",
+  "type": "object",
+  "required": ["name", "nodes"],
+  "properties": {
+    "name":  { "type": "string" },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "endpoints"],
+        "properties": {
+          "name":      { "type": "string" },
+          "type":      { "type": "string", "enum": ["fullnode", "witness", "solidity", "lite"] },
+          "endpoints": { "type": "object", "additionalProperties": { "type": "string" } },
+          "ready":     { "type": "boolean" }
+        }
+      }
+    },
+    "ready_count": { "type": "integer", "minimum": 0 },
+    "duration_ms": { "type": "integer", "minimum": 0 }
+  }
+}

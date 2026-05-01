@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/snapshot-list.schema.json",
+  "title": "trond snapshot list output",
+  "type": "object",
+  "required": ["domain", "network", "kind", "backups"],
+  "properties": {
+    "domain":  { "type": "string" },
+    "network": { "type": "string", "enum": ["mainnet", "nile"] },
+    "kind":    { "type": "string", "enum": ["lite", "full"] },
+    "backups": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^backup\\d{4}-?\\d{2}-?\\d{2}$",
+        "examples": ["backup20260115", "backup2026-01-15"]
+      },
+      "description": "Newest-first."
+    }
+  }
+}
