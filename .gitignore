@@ -4,6 +4,14 @@ bin/
 *.test
 *.out
 
+# Project-local Go toolchain and module cache (downloaded by
+# scripts/bootstrap-go.sh; isolated from the user's $HOME/go).
+.go-toolchain/
+.gopath/
+
+# goreleaser snapshot output
+dist/
+
 # Dependencies
 vendor/
 

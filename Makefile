@@ -5,70 +5,116 @@ COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS    := -s -w -X $(MODULE)/cmd.version=$(VERSION) -X $(MODULE)/cmd.commit=$(COMMIT) -X $(MODULE)/cmd.buildTime=$(BUILD_TIME)
 
-GOFLAGS    ?=
-GOTEST     := go test
-GOLINT     := golangci-lint
+# --- Project-local Go toolchain --------------------------------------
+#
+# We install Go into .go-toolchain/<ver>/ and route every Make target
+# through it via $(GO). Module cache + tool binaries land under .gopath/
+# in the same project so a fresh `make clean-all` removes every byte
+# this repo ever downloaded.
+#
+# Why: avoids the "which Go does the user have" question entirely. A
+# fresh clone followed by `make build` produces an identical binary
+# regardless of what's installed on the host, and the build never
+# pollutes the user's $HOME/go cache.
+#
+# The user can still set USE_SYSTEM_GO=1 to fall back to whatever `go`
+# resolves on PATH (useful in CI runners that already pinned Go via
+# actions/setup-go and want to skip the download step).
 
-.PHONY: build test lint e2e build-all clean fmt vet tidy sync-templates docs man cover vuln
+GO_VERSION ?= 1.25.9
+
+ifeq ($(USE_SYSTEM_GO),1)
+GO         := go
+GO_BOOTSTRAP :=
+else
+GO         := $(CURDIR)/.go-toolchain/$(GO_VERSION)/bin/go
+GO_BOOTSTRAP := bootstrap-go
+export GOROOT := $(CURDIR)/.go-toolchain/$(GO_VERSION)
+export GOPATH := $(CURDIR)/.gopath
+# GOBIN must override the user's shell-exported GOBIN. Without this,
+# `go install` writes binaries into the user's $HOME/go/bin (where the
+# user has GOBIN pointing) and our recipes can't find them under
+# $(GOPATH)/bin. Forcing it here keeps the install fully scoped.
+export GOBIN  := $(GOPATH)/bin
+export PATH   := $(GOROOT)/bin:$(GOBIN):$(PATH)
+endif
+
+GOFLAGS    ?=
+
+.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates docs man cover vuln bootstrap-go
+
+## bootstrap-go: Download + verify the project-local Go toolchain
+##               (idempotent; safe to re-run; no-op if already current)
+bootstrap-go:
+	@GO_VERSION=$(GO_VERSION) ./scripts/bootstrap-go.sh
 
 ## build: Build the trond binary for the current platform
-build:
-	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY) .
+build: $(GO_BOOTSTRAP)
+	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY) .
 
 ## test: Run unit tests
-test:
-	$(GOTEST) ./... -race -count=1
+test: $(GO_BOOTSTRAP)
+	$(GO) test ./... -race -count=1
 
-## lint: Run golangci-lint
-lint:
-	$(GOLINT) run ./...
+## lint: Run golangci-lint (compiled with the project Go toolchain)
+##       so the linter and the project agree on the language version.
+lint: $(GO_BOOTSTRAP)
+	@$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	$(GOPATH)/bin/golangci-lint run --timeout=5m ./...
 
 ## e2e: Run end-to-end tests (requires Docker)
-e2e:
-	$(GOTEST) ./... -tags=e2e -race -count=1 -timeout 10m
+e2e: $(GO_BOOTSTRAP)
+	$(GO) test ./... -tags=e2e -race -count=1 -timeout 10m
 
 ## build-all: Cross-compile for all supported platforms
-build-all:
-	GOOS=linux  GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-linux-amd64 .
-	GOOS=linux  GOARCH=arm64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-linux-arm64 .
-	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-darwin-amd64 .
-	GOOS=darwin GOARCH=arm64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-darwin-arm64 .
+build-all: $(GO_BOOTSTRAP)
+	GOOS=linux  GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-linux-amd64 .
+	GOOS=linux  GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-linux-arm64 .
+	GOOS=darwin GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-darwin-amd64 .
+	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-darwin-arm64 .
 
-## clean: Remove build artifacts
+## clean: Remove build artifacts (keeps the toolchain so re-builds are fast)
 clean:
 	rm -rf bin/
 
+## clean-all: clean + remove the project-local Go toolchain and gopath.
+##            Use this when bumping GO_VERSION or to reclaim disk.
+##            Module cache entries are 0444 by design; chmod first.
+clean-all: clean
+	@if [ -d .gopath ]; then chmod -R u+w .gopath; fi
+	rm -rf .go-toolchain/ .gopath/
+
 ## fmt: Format Go source files
-fmt:
-	go fmt ./...
+fmt: $(GO_BOOTSTRAP)
+	$(GO) fmt ./...
 
 ## vet: Run go vet
-vet:
-	go vet ./...
+vet: $(GO_BOOTSTRAP)
+	$(GO) vet ./...
 
 ## tidy: Tidy go.mod
-tidy:
-	go mod tidy
+tidy: $(GO_BOOTSTRAP)
+	$(GO) mod tidy
 
 ## docs: Generate per-command markdown reference (dist/docs/)
-docs:
+docs: $(GO_BOOTSTRAP)
 	@mkdir -p dist/docs
-	go run ./cmd/gendoc md dist/docs
+	$(GO) run ./cmd/gendoc md dist/docs
 
 ## man: Generate man(1) pages (dist/man/)
-man:
+man: $(GO_BOOTSTRAP)
 	@mkdir -p dist/man
-	go run ./cmd/gendoc man dist/man
+	$(GO) run ./cmd/gendoc man dist/man
 
 ## cover: Run tests with coverage and print per-function summary
-cover:
-	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic ./...
-	go tool cover -func=coverage.out | tail
+cover: $(GO_BOOTSTRAP)
+	$(GO) test -race -coverprofile=coverage.out -covermode=atomic ./...
+	$(GO) tool cover -func=coverage.out | tail
 
 ## vuln: Run govulncheck against the module
-vuln:
-	@command -v govulncheck >/dev/null || go install golang.org/x/vuln/cmd/govulncheck@latest
-	govulncheck ./...
+vuln: $(GO_BOOTSTRAP)
+	@$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
+	$(GOPATH)/bin/govulncheck ./...
 
 ## sync-templates: Refresh mainnet + nile config templates from upstream
 ##                 Source-of-truth URLs:

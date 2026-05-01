@@ -76,6 +76,11 @@ sudo mv trond /usr/local/bin/
 
 ### From source
 
+`make` downloads a pinned Go toolchain into `./.go-toolchain/<version>/`,
+caches modules under `./.gopath/`, and builds with that — nothing
+leaks into `~/go` or your system Go install. A fresh clone produces
+an identical binary on any host with `bash`, `curl`/`wget`, and `tar`.
+
 ```bash
 git clone https://github.com/tronprotocol/tron-deployment.git
 cd tron-deployment
@@ -83,7 +88,20 @@ make build
 # Binary: ./bin/trond
 ```
 
-Requires Go 1.25+.
+The first build downloads ~150 MB and takes ~15 s on a typical link;
+subsequent builds reuse the cached toolchain (1–2 s).
+
+If you'd rather use the Go you already have, opt out:
+
+```bash
+make USE_SYSTEM_GO=1 build
+```
+
+Reclaim every byte the build downloaded:
+
+```bash
+make clean-all          # removes bin/, .go-toolchain/, .gopath/
+```
 
 ### Shell completion
 

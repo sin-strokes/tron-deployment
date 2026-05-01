@@ -16,12 +16,33 @@ git clone https://github.com/tronprotocol/tron-deployment.git
 cd tron-deployment
 make build            # → bin/trond
 make test             # unit tests
-make lint             # golangci-lint (requires v1.65+ for go 1.25)
+make lint             # golangci-lint (project-local install)
 make e2e              # end-to-end tests (requires Docker)
 ```
 
-Go version: **1.25+**. Anything older won't compile (the `validator/v10`
-dependency requires it).
+You don't need Go pre-installed. The first `make` invocation downloads
+the pinned Go toolchain (currently 1.25.9) into `./.go-toolchain/` after
+SHA256-verifying the upstream archive, caches modules under `./.gopath/`,
+and builds everything with that. Nothing touches `~/go`, `/usr/local/go`,
+or your system Go install. Re-runs reuse the cached toolchain.
+
+If you'd rather use a Go you've already installed (and accept that your
+binary may not be byte-identical to a fresh-clone build), pass
+`USE_SYSTEM_GO=1`:
+
+```bash
+make USE_SYSTEM_GO=1 build
+```
+
+Reclaim every byte:
+
+```bash
+make clean-all
+```
+
+When bumping the pinned Go version, edit `GO_VERSION` in `Makefile` and
+the four `expected_sha=` lines in `scripts/bootstrap-go.sh`. Hashes come
+from `https://go.dev/dl/?mode=json` — never from a third-party mirror.
 
 ## Filing an issue
 
