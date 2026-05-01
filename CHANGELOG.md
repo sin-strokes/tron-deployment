@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdio so chat-based / IDE-embedded agents (Claude Desktop, Cursor,
   Cline, Continue.dev, Zed AI, ChatGPT Apps) can call trond
   capabilities as structured tools without shelling out. Registers
-  17 tools across inspection (list/status/inspect), diagnostic
+  16 tools across inspection (list/status/inspect), diagnostic
   (doctor/version/health/diagnose), config (config_validate /
   config_render / plan), lifecycle (apply, marked destructive),
   snapshot (sources/list/jobs/download with MCP progress

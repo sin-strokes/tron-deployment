@@ -407,15 +407,15 @@ Configure once in your client. Example for Claude Desktop
 }
 ```
 
-The server registers these tools (read-only unless marked):
+The server registers 16 tools (read-only unless marked):
 
-- **inspection**: `list`, `status`, `inspect`
-- **diagnostic**: `doctor`, `version`, `health`, `diagnose`
-- **config**: `config_validate`, `config_render`, `plan`
-- **lifecycle**: `apply` (destructive)
-- **snapshot**: `snapshot_sources`, `snapshot_list`, `snapshot_jobs`,
+- **inspection** (3): `list`, `status`, `inspect`
+- **diagnostic** (4): `doctor`, `version`, `health`, `diagnose`
+- **config** (2): `config_validate`, `config_render`
+- **lifecycle** (2): `plan`, `apply` (destructive)
+- **snapshot** (4): `snapshot_sources`, `snapshot_list`, `snapshot_jobs`,
   `snapshot_download` (destructive, emits MCP progress notifications)
-- **knowledge**: `knowledge_list`, `knowledge_get`
+- **knowledge** (2): `knowledge_list`, `knowledge_get`
 
 Destructive tools carry the MCP `destructiveHint` annotation so MCP
 clients prompt the user. The server's `Instructions` field

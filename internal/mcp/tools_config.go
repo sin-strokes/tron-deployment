@@ -63,11 +63,10 @@ func renderTool(ctx context.Context, _ *mcp.CallToolRequest, args renderArg) (*m
 
 	rendered := make([]map[string]any, 0, len(parsed.Nodes))
 	for i := range parsed.Nodes {
-		if args.Node != 0 && i != args.Node {
-			// args.Node uses 0 for "all" (default); 1-based index for filter.
-			if !(args.Node-1 == i) {
-				continue
-			}
+		// args.Node uses 0 for "all" (default); 1-based index for filter.
+		// So args.Node=2 → render only the second node (i=1).
+		if args.Node != 0 && args.Node-1 != i {
+			continue
 		}
 		node := &parsed.Nodes[i]
 		hocon, err := render.RenderHOCON(templateDir, parsed, node)

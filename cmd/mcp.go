@@ -15,7 +15,9 @@ import (
 // becomes a function the LLM can invoke directly.
 //
 // Example Claude Desktop config (~/.config/claude-desktop/config.json
-// or %APPDATA%/Claude/config.json):
+// or %APPDATA%/Claude/config.json — substitute the absolute path
+// returned by `which trond`; brew installs land at /opt/homebrew/bin
+// on Apple Silicon, /usr/local/bin elsewhere):
 //
 //	{
 //	  "mcpServers": {

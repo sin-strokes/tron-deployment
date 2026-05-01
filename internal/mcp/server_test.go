@@ -215,6 +215,83 @@ func TestKnowledge_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestDestructiveTools_HaveDestructiveHint(t *testing.T) {
+	session, cleanup := newConnectedPair(t)
+	defer cleanup()
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	mustBeDestructive := map[string]bool{
+		"apply":             true,
+		"snapshot_download": true,
+	}
+	for _, tool := range res.Tools {
+		if !mustBeDestructive[tool.Name] {
+			continue
+		}
+		if tool.Annotations == nil {
+			t.Errorf("%s: missing Annotations entirely", tool.Name)
+			continue
+		}
+		if tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint {
+			t.Errorf("%s: DestructiveHint should be true; got %+v", tool.Name, tool.Annotations.DestructiveHint)
+		}
+		delete(mustBeDestructive, tool.Name)
+	}
+	for stillMissing := range mustBeDestructive {
+		t.Errorf("destructive tool %q not found in ListTools output", stillMissing)
+	}
+}
+
+func TestApply_ReturnsNotImplementedEnvelope(t *testing.T) {
+	session, cleanup := newConnectedPair(t)
+	defer cleanup()
+
+	// Use a real example intent so intent.Load doesn't fail before we
+	// reach the stub. examples/nile-fullnode.yaml is small + complete.
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "apply",
+		Arguments: json.RawMessage(`{"path":"../../examples/nile-fullnode.yaml"}`),
+	})
+	if err != nil {
+		t.Fatalf("CallTool apply: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("apply stub should set IsError=true while in-process apply is unimplemented")
+	}
+	body := extractText(t, res)
+	var env map[string]any
+	_ = json.Unmarshal([]byte(body), &env)
+	if env["error_code"] != "NOT_IMPLEMENTED_VIA_MCP" {
+		t.Errorf("expected error_code=NOT_IMPLEMENTED_VIA_MCP, got %v", env["error_code"])
+	}
+}
+
+func TestSnapshotDownload_DryRunReturnsPlan(t *testing.T) {
+	session, cleanup := newConnectedPair(t)
+	defer cleanup()
+
+	// dry_run=true so we never hit the network beyond the upstream
+	// HEAD probe — and even that we skip by passing an unknown
+	// network/domain combo: pickSource fails before any HTTP call.
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "snapshot_download",
+		Arguments: json.RawMessage(`{"network":"definitely-not-a-network","dest":"/tmp/x","dry_run":true}`),
+	})
+	if err != nil {
+		t.Fatalf("CallTool snapshot_download: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("snapshot_download with bogus network should error")
+	}
+	body := extractText(t, res)
+	if !strings.Contains(body, "no source matches") {
+		t.Errorf("expected 'no source matches' in error body, got: %s", body)
+	}
+}
+
 func TestStatus_NotFound_ReturnsStructuredError(t *testing.T) {
 	session, cleanup := newConnectedPair(t)
 	defer cleanup()
