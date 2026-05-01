@@ -340,8 +340,7 @@ topic; don't paraphrase from training data.
 
 3. **Don't grep `trond --help` to discover commands**. Use
    `trond knowledge` for tutorials, `trond config docs <key>` for HOCON
-   keys, and (when implemented) `trond schema` for the full machine
-   contract.
+   keys, and `trond schema` for the full machine contract.
 
 4. **Don't write witness keys into `extra_env`**. Use the
    `witness_key.private_key_env` field; trond inlines the value into
