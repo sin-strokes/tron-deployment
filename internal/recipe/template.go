@@ -33,11 +33,17 @@ func substitute(raw string, params map[string]string, steps map[string]map[strin
 	// two top-level scopes here so recipe authors don't have to think
 	// about Go-template internals. This is a deliberate one-line
 	// translation, not a generic preprocessor.
+	// Cover the four shapes Go template parsers accept: with/without
+	// inner whitespace, and with the trim modifier (`{{-` / `-}}`).
+	// Future recipes that use trim get the same translation as plain
+	// `{{ params.X }}` does today.
 	rewritten := raw
-	rewritten = strings.ReplaceAll(rewritten, "{{ params.", "{{ .params.")
-	rewritten = strings.ReplaceAll(rewritten, "{{params.", "{{.params.")
-	rewritten = strings.ReplaceAll(rewritten, "{{ steps.", "{{ .steps.")
-	rewritten = strings.ReplaceAll(rewritten, "{{steps.", "{{.steps.")
+	for _, scope := range []string{"params", "steps"} {
+		rewritten = strings.ReplaceAll(rewritten, "{{ "+scope+".", "{{ ."+scope+".")
+		rewritten = strings.ReplaceAll(rewritten, "{{"+scope+".", "{{."+scope+".")
+		rewritten = strings.ReplaceAll(rewritten, "{{- "+scope+".", "{{- ."+scope+".")
+		rewritten = strings.ReplaceAll(rewritten, "{{-"+scope+".", "{{-."+scope+".")
+	}
 
 	t, err := template.New("step").Option("missingkey=error").Parse(rewritten)
 	if err != nil {

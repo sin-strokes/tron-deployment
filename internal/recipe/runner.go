@@ -27,9 +27,11 @@ type RunOptions struct {
 	DryRun bool
 
 	// ResumeFrom skips every step before the named ID. The skipped
-	// steps' outputs aren't available, so recipes that resume have to
-	// be designed to tolerate missing earlier outputs (or the user
-	// has to supply them via --param).
+	// steps' outputs are NOT rebuilt — stepsState starts empty for the
+	// resumed run. Resumed steps that reference {{ steps.<earlier>.X }}
+	// will fail loudly with a "missing key" template error; recipes
+	// designed for resume must either avoid such references or pass
+	// the previously-computed values through --param.
 	ResumeFrom string
 
 	// Out / Err receive human-readable progress lines. Recipe runs

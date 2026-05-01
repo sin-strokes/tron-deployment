@@ -1,16 +1,15 @@
 name: destroy-private-network-cleanly
 description: |
   Tear down a multi-node private network created via `trond network
-  create`. Stops every node, then runs network destroy with the
-  --confirm gate. The status-check step runs first and is informational
-  only (its on_failure is "continue" so a missing network doesn't
-  abort the recipe — but the destroy step that follows WILL fail with
-  NETWORK_NOT_FOUND if there's nothing to destroy, which is the right
-  signal that the recipe was called against the wrong name).
+  create`. The status-check step is informational only — if the
+  network is already gone, status-check fails but on_failure=continue
+  lets the recipe proceed. The destroy step that follows then fails
+  loudly with NETWORK_NOT_FOUND, which is the correct signal the
+  recipe was called with a name that doesn't exist.
 
-  Use this for clean test cleanup. To destroy WITHOUT failing on
-  already-destroyed networks (e.g., from CI cleanup hooks), call
-  `trond network destroy --confirm <name>` directly and ignore exit 1.
+  Use this for clean test cleanup. For CI cleanup hooks where you
+  want to ignore "already destroyed", call `trond network destroy
+  --confirm <name>` directly and tolerate exit 1.
 
 params:
   - name: network

@@ -49,7 +49,6 @@ steps:
       - "{{ params.node }}"
       - --version
       - "{{ params.version }}"
-      - --auto-approve
     on_failure: rollback
 
   - id: verify
@@ -71,5 +70,4 @@ rollback:
     command: rollback
     args:
       - "{{ params.node }}"
-      - --auto-approve
     on_failure: continue

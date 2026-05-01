@@ -272,9 +272,51 @@ func TestRun_ResumeFromSkipsEarlierSteps(t *testing.T) {
 	}
 }
 
+func TestRun_SkipPredicateGatesStep(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip()
+	}
+	r := Recipe{
+		Name: "test",
+		Params: []Param{
+			{Name: "skip_first", Default: "false"},
+		},
+		Steps: []Step{
+			{ID: "first", Command: "anything", Skip: "{{ params.skip_first }}"},
+			{ID: "second", Command: "anything"},
+		},
+	}
+	out := &bytes.Buffer{}
+
+	// skip_first=true → first should be skipped, second should run (and fail
+	// against /usr/bin/false).
+	res, _ := Run(context.Background(), r, RunOptions{
+		Binary: "/usr/bin/false",
+		Params: map[string]string{"skip_first": "true"},
+		Out:    out, Err: out,
+	})
+	if !res.Steps[0].Skipped {
+		t.Errorf("first step should be skipped when skip evaluates 'true', got %+v", res.Steps[0])
+	}
+
+	// skip_first=false → both run; first hits /usr/bin/false and aborts.
+	out.Reset()
+	res, _ = Run(context.Background(), r, RunOptions{
+		Binary: "/usr/bin/false",
+		Params: map[string]string{"skip_first": "false"},
+		Out:    out, Err: out,
+	})
+	if res.Steps[0].Skipped {
+		t.Errorf("first step should NOT be skipped when skip evaluates 'false'")
+	}
+}
+
 // Integration-style: verify the YAML on disk in recipes/ matches the
 // embedded copy in internal/recipe/files/. Catches a merge that
 // updates one but forgets the other.
+//
+// Assumes recipe_test.go remains at internal/recipe/recipe_test.go;
+// if the test moves, update the relative paths here.
 func TestEmbedded_MatchesPublicCopy(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")

@@ -32,7 +32,6 @@ steps:
     command: rollback
     args:
       - "{{ params.node }}"
-      - --auto-approve
     on_failure: abort
 
   - id: verify
