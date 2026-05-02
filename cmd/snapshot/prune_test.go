@@ -1,6 +1,8 @@
 package snapshot
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -127,5 +129,57 @@ func TestPrune_DryRunRemovesNothing(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(jobsDir, id+".json")); err != nil {
 			t.Errorf("expected %s manifest preserved (dry-run), got %v", id, err)
 		}
+	}
+}
+
+func TestPrune_JSONOutputShape(t *testing.T) {
+	pruneFixture(t)
+
+	pruneOlderThan = 7 * 24 * time.Hour
+	pruneAll = false
+	pruneDryRun = true
+
+	// Set the cobra `--output json` flag on the command so the runPrune
+	// JSON branch fires. If the persistent flag wasn't inherited (tests
+	// don't run cobra's setup), register it locally for this test.
+	if pruneCmd.Flags().Lookup("output") == nil {
+		pruneCmd.Flags().String("output", "", "test-only")
+	}
+	if err := pruneCmd.Flags().Set("output", "json"); err != nil {
+		t.Fatalf("set output flag: %v", err)
+	}
+	t.Cleanup(func() { _ = pruneCmd.Flags().Set("output", "") })
+
+	// Capture stdout via a pipe so we can decode the JSON the runPrune
+	// helper writes there. Simplest approach without refactoring runPrune
+	// to accept an io.Writer.
+	r, w, _ := os.Pipe()
+	origStdout := os.Stdout
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = origStdout })
+
+	runErr := runPrune(pruneCmd, nil)
+	w.Close()
+
+	body, _ := io.ReadAll(r)
+	if runErr != nil {
+		t.Fatalf("runPrune: %v\noutput: %s", runErr, body)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v\noutput: %s", err, body)
+	}
+	for _, k := range []string{"jobs", "removed_count", "reclaimed_bytes", "dry_run"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("expected key %q in JSON output, got %v", k, got)
+		}
+	}
+	if got["dry_run"] != true {
+		t.Errorf("expected dry_run=true, got %v", got["dry_run"])
+	}
+	jobs, ok := got["jobs"].([]any)
+	if !ok || len(jobs) != 3 {
+		t.Errorf("expected 3 jobs in output, got %v (type %T)", got["jobs"], got["jobs"])
 	}
 }

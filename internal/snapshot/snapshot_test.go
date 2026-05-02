@@ -308,3 +308,38 @@ func errorsAs(err error, target any) bool {
 	}
 	return false
 }
+
+// TestIsRunning_TreatsLiveAndEPERMAsAlive directly exercises the kill(0)
+// outcome triage that the prune subcommand depends on. Without this
+// dedicated test the only coverage was indirect (via cmd/snapshot's
+// prune fixture using PID 1), making future refactors of IsRunning
+// risky.
+func TestIsRunning_DeadPIDReturnsFalse(t *testing.T) {
+	// A pid we're confident isn't allocated. 999_999 is below the
+	// hard kernel cap on macOS (~99k) and Linux (~32k by default but
+	// PID_MAX configurable up to 4M) — far enough out that the kernel
+	// returns ESRCH on a kill(0) probe.
+	if IsRunning(999_999) {
+		t.Skip("PID 999999 is unexpectedly alive on this system; can't prove the negative")
+	}
+}
+
+func TestIsRunning_AliveSelfReturnsTrue(t *testing.T) {
+	// Self-PID is always signalable from the test process.
+	if !IsRunning(os.Getpid()) {
+		t.Errorf("IsRunning(self pid %d) should return true", os.Getpid())
+	}
+}
+
+func TestIsRunning_EPERMTreatedAsAlive(t *testing.T) {
+	// PID 1 (init/launchd) is always running. As a non-root test
+	// process, kill(0) returns EPERM rather than ESRCH — the bug
+	// fixed in this commit was misclassifying that as "dead".
+	// Skip if running as root, where the EPERM path doesn't fire.
+	if os.Getuid() == 0 {
+		t.Skip("test runs as root; kill(0,1) returns nil instead of EPERM")
+	}
+	if !IsRunning(1) {
+		t.Errorf("IsRunning(1) should return true; init exists but kill(0) returns EPERM for non-root callers — that's still alive")
+	}
+}
