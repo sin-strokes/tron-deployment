@@ -32,4 +32,5 @@ func init() {
 	Cmd.AddCommand(jobsCmd)
 	Cmd.AddCommand(logsCmd)
 	Cmd.AddCommand(stopCmd)
+	Cmd.AddCommand(pruneCmd)
 }
