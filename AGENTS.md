@@ -55,6 +55,19 @@ Set `auto_ports: true` under `target:` in intent files when the host
 might already be running TRON nodes — trond allocates free OS ports
 and persists them so the agent doesn't have to negotiate ports.
 
+For long-running agent sessions or distributed orchestration, set
+`TROND_OTLP_ENDPOINT` to ship spans (one per `trond <cmd>` invocation)
+to your OpenTelemetry collector:
+
+```bash
+export TROND_OTLP_ENDPOINT=https://otel.example.com:4318
+# Optional: TROND_OTLP_HEADERS="api-key=...,tenant=..."
+# Optional: TROND_OTLP_INSECURE=1   (allow plaintext HTTP)
+# Optional: TROND_OTLP_TIMEOUT=10s  (shutdown flush budget)
+```
+
+Unset (default) → no-op tracer, zero overhead, no network IO.
+
 ---
 
 ## Exit codes — what each means and how to react
@@ -110,6 +123,9 @@ trond plan --intent intent.yaml -o json
 #          "changes": [{"type":"create"|"update"|"delete", "field":"...", ...}],
 #          "destructive": false, "estimated_downtime_seconds": 0}
 # If changes is empty AND current_state is "running", you can skip apply.
+# Add --diff to also surface the line-by-line HOCON config delta:
+#   trond plan --intent intent.yaml --diff -o json
+# Output: same shape plus "config_diff": ["+ key = newValue", "- key = oldValue", ...]
 
 # 4. Apply — idempotent. Re-running the same intent is a no-op.
 trond apply --intent intent.yaml --auto-approve --wait -o json
@@ -268,7 +284,17 @@ trond network status pn -o json
 trond inspect --network pn -o json
 trond exec pn-witness -- /java-tron/bin/FullNode --help
 
-# 6. Cleanup. --confirm must match the network name (refuses typos).
+# 6. Rolling upgrade — fullnodes first then witnesses, gated by verify.
+#    --auto-rollback reverts every already-upgraded node if any fails.
+trond network upgrade pn \
+  --intent my-net.yaml \
+  --version 4.8.1 \
+  --auto-rollback -o json
+# Output: {"network":"pn","version":"4.8.1","upgraded_count":N,
+#          "upgraded_nodes":[...],"steps":[{node,phase,status,...}],
+#          "status":"success"|"failed","failed_at":"..."?}
+
+# 7. Cleanup. --confirm must match the network name (refuses typos).
 trond network destroy pn --confirm pn -o json
 ```
 

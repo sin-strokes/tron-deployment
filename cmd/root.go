@@ -74,6 +74,11 @@ func init() {
 // generator under cmd/gendoc and by tests that want to walk the tree.
 func Root() *cobra.Command { return rootCmd }
 
+// Version returns the build-stamped version string set via -ldflags.
+// Exposed for callers (main.go) that need it before cobra parses
+// arguments — e.g. the OpenTelemetry resource tag.
+func Version() string { return version }
+
 // Execute runs the root command and returns the exit code.
 // StructuredError values are rendered in the requested format and their
 // ExitCode is returned. This runs after cobra has unwound all RunE deferred

@@ -3,27 +3,41 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 )
 
-var planIntentPath string
+var (
+	planIntentPath string
+	planShowDiff   bool
+)
 
 var planCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Preview deployment changes without applying",
-	Long:  "Show what trond apply would do: validate, render, diff against current state, output changes.",
-	RunE:  runPlan,
+	Long: `Show what trond apply would do: validate, render, diff against
+current state, output changes.
+
+By default the diff is field-level (intent_hash / config_hash /
+version deltas). Pass --diff to also surface the line-by-line HOCON
+content diff so reviewers can see WHICH config keys would actually
+change, not just that the hash drifted.`,
+	RunE: runPlan,
 }
 
 func init() {
 	planCmd.Flags().StringVar(&planIntentPath, "intent", "", "Path to intent.yaml (required)")
+	planCmd.Flags().BoolVar(&planShowDiff, "diff", false,
+		"Include the line-by-line HOCON config diff in the output (text + JSON)")
 	mustMarkRequired(planCmd, "intent")
 	rootCmd.AddCommand(planCmd)
 }
@@ -138,13 +152,80 @@ func runPlan(cmd *cobra.Command, args []string) error {
 		"network":                    parsed.Network,
 	}
 
+	// --diff: surface the line-by-line HOCON content diff so reviewers
+	// can see which keys actually changed, not just that hashes drifted.
+	// Skipped when there's no deployed config to compare against
+	// (existing == nil) or when the on-disk deployed file is missing
+	// (deployment dir cleaned, etc.).
+	var diffLines []string
+	if planShowDiff && existing != nil {
+		deployedPath := filepath.Join(paths.Deployments(), parsed.Name, parsed.Name+".conf")
+		if data, err := os.ReadFile(deployedPath); err == nil {
+			diffLines = simpleHOCONDiff(strings.Split(string(data), "\n"),
+				strings.Split(hoconConfig, "\n"))
+		}
+		// JSON consumers always get the field (possibly empty array)
+		// so they can distinguish "no changes" from "diff was not
+		// requested" by checking whether the key is present.
+		result["config_diff"] = diffLines
+	}
+
 	if outputFmt == "json" {
 		output.WriteJSON(os.Stdout, result)
 	} else {
 		printPlanText(result, changes)
+		if planShowDiff {
+			printDiffSection(existing, diffLines)
+		}
 	}
 
 	return nil
+}
+
+// simpleHOCONDiff is a deliberately tiny line-by-line differ. Same
+// shape as cmd/config/diff.go::simpleDiff but private to plan to
+// avoid coupling — both could call into a shared internal/diff
+// helper later if a third caller appears.
+func simpleHOCONDiff(old, new []string) []string {
+	var diffs []string
+	maxLen := len(old)
+	if len(new) > maxLen {
+		maxLen = len(new)
+	}
+	for i := 0; i < maxLen; i++ {
+		var oldLine, newLine string
+		if i < len(old) {
+			oldLine = old[i]
+		}
+		if i < len(new) {
+			newLine = new[i]
+		}
+		if oldLine != newLine {
+			if oldLine != "" {
+				diffs = append(diffs, "- "+oldLine)
+			}
+			if newLine != "" {
+				diffs = append(diffs, "+ "+newLine)
+			}
+		}
+	}
+	return diffs
+}
+
+// printDiffSection renders the line diff under the changes section
+// in text mode. Stays empty when there's nothing useful to say.
+func printDiffSection(existing *state.ManagedNode, diffLines []string) {
+	switch {
+	case existing == nil:
+		fmt.Println("\nConfig diff: (skipped — node not yet deployed)")
+	case len(diffLines) == 0:
+		fmt.Println("\nConfig diff: (no rendered HOCON differences)")
+	default:
+		fmt.Printf("\nConfig diff (%d line(s)):\n", len(diffLines))
+		for _, line := range diffLines {
+			fmt.Println("  " + line)
+		}
+	}
 }
 
 func printPlanText(result map[string]any, changes []planChange) {

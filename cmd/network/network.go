@@ -21,6 +21,7 @@ func init() {
 	Cmd.AddCommand(createCmd)
 	Cmd.AddCommand(statusCmd)
 	Cmd.AddCommand(destroyCmd)
+	Cmd.AddCommand(upgradeCmd)
 }
 
 // auditEvent mirrors the struct in the cmd package. The network subcommand
