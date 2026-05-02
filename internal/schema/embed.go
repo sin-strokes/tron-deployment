@@ -16,12 +16,29 @@ import (
 	"strings"
 )
 
-// SchemaVersion is the trond CLI contract version. Bumped when an
-// existing field in any output schema changes meaning, gets renamed,
-// or is removed. Field additions are minor and don't bump it.
+// SchemaVersion is the trond CLI contract version. Semver semantics:
 //
-// Agents should pin against this and re-read AGENTS.md on a major bump.
-const SchemaVersion = "1.0.0"
+//   - PATCH: a single existing schema gains an additive optional field
+//     (clients that ignore unknown fields are unaffected).
+//   - MINOR: an entirely new schema is added (a new command becomes
+//     manifest-discoverable; existing schemas unchanged).
+//   - MAJOR: an existing field is renamed, removed, or its meaning
+//     shifts. Agents pinned to the prior major may break.
+//
+// Agents should pin to MAJOR for compat detection and re-read AGENTS.md
+// when MAJOR bumps. The version bump rationale is also captured in
+// CHANGELOG entries.
+//
+// History:
+//
+//	1.0.0 — initial 21 schemas (apply, plan, status, list, inspect,
+//	        diagnose, health, verify, preflight, doctor, version,
+//	        events, config-validate, config-render, network-create,
+//	        network-status, snapshot-sources, snapshot-list,
+//	        snapshot-download, snapshot-jobs, error envelope).
+//	1.1.0 — add recipe-list / recipe-show / recipe-run schemas (no
+//	        changes to existing schemas).
+const SchemaVersion = "1.1.0"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output
 // schema files. Embedded $id values inside each schema mirror this so

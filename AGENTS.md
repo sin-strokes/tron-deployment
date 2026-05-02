@@ -451,6 +451,11 @@ fields forward via `{{ steps.<id>.<field> }}` substitution. Steps
 declare `on_failure: abort | continue | rollback`; rollback steps
 run as a best-effort cleanup pass when triggered.
 
+The output of `recipe list / show / run` is documented as JSON Schema
+(`schemas/output/recipe-{list,show,run}.schema.json`); pull via
+`trond schema "recipe run" --output-only -o json` or validate parsed
+output against the embedded schema.
+
 Shipped recipes:
 
 | Name | What it does |
