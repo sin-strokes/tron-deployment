@@ -2,11 +2,15 @@ package mcp
 
 import (
 	"context"
+	"maps"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/state"
+	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
 // registerInspectionTools wires the read-only "what's deployed?"
@@ -85,13 +89,7 @@ func statusForNode(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*
 	if node == nil {
 		return errResult(notFound("status", args.Name))
 	}
-	// We deliberately don't run the live HTTP probe here yet — that
-	// would require wiring `cmd/status.go::liveStatusProbe` out into
-	// internal/. For now return the persisted state, which is the
-	// authoritative source for is_synced / block_height after apply.
-	// TODO: extract liveStatusProbe to internal/ so MCP can offer the
-	// same combined view as `trond status` does.
-	return jsonResult(map[string]any{
+	out := map[string]any{
 		"name":         node.Name,
 		"status":       node.Status,
 		"runtime":      node.Runtime,
@@ -101,7 +99,38 @@ func statusForNode(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*
 		"intent_hash":  node.IntentHash,
 		"config_hash":  node.ConfigHash,
 		"labels":       node.Labels,
-	})
+	}
+	// Live probe — best effort, only when state says the node is
+	// running. We resolve a target via the node's stored target spec
+	// (state.NodeTarget → target.Target) and hand it to apply.LiveStatus.
+	// Errors during probe are silently dropped; the caller sees
+	// block_height / is_synced / peer_count appear or not.
+	if node.Status == "running" {
+		if tgt, err := mcpResolveTargetFromNode(node); err == nil {
+			if c, ok := any(tgt).(interface{ Close() error }); ok {
+				defer c.Close()
+			}
+			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			maps.Copy(out, apply.LiveStatus(probeCtx, tgt, node))
+		}
+	}
+	return jsonResult(out)
+}
+
+// mcpResolveTargetFromNode mirrors cmd/resolve.go::resolveTargetFromNode.
+// Duplicated so internal/mcp doesn't import cmd/.
+func mcpResolveTargetFromNode(node *state.ManagedNode) (target.Target, error) {
+	switch node.Target.Type {
+	case "ssh":
+		t := target.NewSSHTarget(node.Target.Host, node.Target.Port, node.Target.User, node.Target.IdentityFile)
+		if err := t.Connect(); err != nil {
+			return nil, err
+		}
+		return t, nil
+	default:
+		return target.NewLocalTarget(), nil
+	}
 }
 
 func inspectAllNodes(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (*mcp.CallToolResult, any, error) {

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 )
@@ -115,61 +115,16 @@ func effectivePort(stored, fallback int) int {
 	return fallback
 }
 
-// liveStatusProbe makes the (cheap) HTTP API calls a status command is
-// expected to surface. Errors are silently dropped — the caller sees
-// the keys appear or not, never a failure on the whole command.
+// liveStatusProbe wraps the package-level apply.LiveStatus so cmd/
+// callers don't have to think about target resolution. The actual
+// probe logic lives in internal/apply for reuse by MCP / recipe.
 func liveStatusProbe(ctx context.Context, node *state.ManagedNode) map[string]any {
-	out := map[string]any{}
-	port := effectivePort(node.HTTPPort, 8090)
-
 	tgt, err := resolveTargetFromNode(node)
 	if err != nil {
-		return out
+		return map[string]any{}
 	}
 	if c, ok := any(tgt).(interface{ Close() error }); ok {
 		defer c.Close()
 	}
-
-	probe := func(path string) ([]byte, error) {
-		url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
-		// docker exec for docker runtime, host curl for jar runtime.
-		// Mirrors the diagnose checkers' approach.
-		if node.Runtime == "jar" {
-			return tgt.Exec(ctx, "curl", "-fsS", "--max-time", "2", url)
-		}
-		return tgt.Exec(ctx, "docker", "exec", node.Name, "curl", "-fsS", "--max-time", "2", url)
-	}
-
-	// Block height + sync state from getnowblock.
-	if data, err := probe("/wallet/getnowblock"); err == nil {
-		var block struct {
-			BlockHeader struct {
-				RawData struct {
-					Number    int64 `json:"number"`
-					Timestamp int64 `json:"timestamp"`
-				} `json:"raw_data"`
-			} `json:"block_header"`
-		}
-		if json.Unmarshal(data, &block) == nil {
-			out["block_height"] = block.BlockHeader.RawData.Number
-			if block.BlockHeader.RawData.Timestamp > 0 {
-				// "synced" heuristic: tip is within 60s of now. Good enough for
-				// dashboards; not a consensus-level claim.
-				lag := time.Since(time.UnixMilli(block.BlockHeader.RawData.Timestamp))
-				out["is_synced"] = lag < 60*time.Second
-			}
-		}
-	}
-
-	// Peer count from listnodes.
-	if data, err := probe("/wallet/listnodes"); err == nil {
-		var nodes struct {
-			Nodes []any `json:"nodes"`
-		}
-		if json.Unmarshal(data, &nodes) == nil {
-			out["peer_count"] = len(nodes.Nodes)
-		}
-	}
-
-	return out
+	return apply.LiveStatus(ctx, tgt, node)
 }

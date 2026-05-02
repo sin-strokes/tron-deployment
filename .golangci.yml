@@ -91,6 +91,12 @@ issues:
     - path: cmd/.+\.go
       linters: [errcheck]
       text: "(closer|c|t)\\.Close"
+    # Same pattern propagated into internal/mcp's lifecycle tool: the
+    # apply tool defers a target.Target Close on the SSH connection
+    # path. Same justification as the cmd/* rule above.
+    - path: internal/mcp/.+\.go
+      linters: [errcheck]
+      text: "(closer|c)\\.Close"
     # nc.SaveState / nc.Store.Save in cmd/* run on the post-action
     # cleanup path; the action itself already returned its result.
     # If the save itself fails, the worst case is a stale state.json,

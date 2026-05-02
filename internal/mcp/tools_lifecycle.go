@@ -2,11 +2,18 @@ package mcp
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/paths"
+	"github.com/tronprotocol/tron-deployment/internal/state"
+	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
 // registerLifecycleTools wires deploy-related tools. Most are
@@ -86,33 +93,93 @@ type applyArgs struct {
 }
 
 func applyTool(ctx context.Context, _ *mcp.CallToolRequest, args applyArgs) (*mcp.CallToolResult, any, error) {
-	// Phase-1 stub: we validate the intent and acknowledge the
-	// requested action without executing it. This prevents an LLM
-	// from accidentally running a destructive op when the trond CLI
-	// pieces have not been extracted from cmd/apply.go yet.
-	//
-	// When that extraction lands, swap the body for a direct call to
-	// the pure-function apply. The MCP tool description already warns
-	// agents about this state.
+	// Pure in-process apply via the internal/apply package. We
+	// duplicate the cmd/apply.go pre-flight (load intent, resolve
+	// target, lock, hash, HUMAN_REQUIRED gate) here because the MCP
+	// surface is the structured tool, not a shell command.
 	parsed, err := intent.Load(args.Path)
+	if err != nil {
+		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error()))
+	}
+
+	tgt, err := resolveTarget(parsed)
+	if err != nil {
+		return errResult(output.NewError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error()))
+	}
+	if closer, ok := tgt.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+
+	lock := state.NewLock(paths.BaseDir())
+	if err := lock.Acquire(); err != nil {
+		return errResult(output.NewError("LOCK_ERROR", output.ExitGeneralError, err.Error()))
+	}
+	defer lock.Release()
+
+	store, err := state.NewStore(paths.State())
 	if err != nil {
 		return errResult(err)
 	}
-	return errResult(output.NewError(
-		"NOT_IMPLEMENTED_VIA_MCP",
-		output.ExitGeneralError,
-		"apply is not yet executable directly from MCP; this is a known gap").
-		WithSuggestions(
-			"Run the validated intent through the shell: `trond apply --intent "+args.Path+" --auto-approve "+waitFlag(args.Wait)+"`",
-			"For verification only, the intent has been validated: name="+parsed.Name+" network="+parsed.Network,
-		))
+	st, err := store.Load()
+	if err != nil {
+		return errResult(err)
+	}
+
+	intentBytes, _ := os.ReadFile(args.Path)
+	intentHash := apply.IntentHashFromBytes(intentBytes)
+	existing := store.GetNode(st, parsed.Name)
+	if existing != nil && existing.IntentHash != intentHash && !args.AutoApprove {
+		return errResult(output.NewError("HUMAN_REQUIRED", output.ExitHumanRequired,
+			fmt.Sprintf("Changes detected for node %q; pass auto_approve=true to proceed", parsed.Name)).
+			WithSuggestions("Call the 'plan' tool first to inspect the diff",
+				"Surface the diff to the user, get approval, then re-call apply with auto_approve=true"))
+	}
+
+	res, err := apply.Apply(ctx, apply.Options{
+		Intent:         parsed,
+		Target:         tgt,
+		Store:          store,
+		State:          st,
+		IntentHash:     intentHash,
+		Existing:       existing,
+		TemplateDir:    "",
+		DeploymentsDir: paths.Deployments(),
+		EnvVars:        resolveEnvVars(&parsed.Nodes[0]),
+		Wait:           args.Wait,
+		WaitTimeout:    5 * time.Minute,
+	})
+	if err != nil {
+		return errResult(output.NewError("DEPLOY_ERROR", output.ExitGeneralError, err.Error()))
+	}
+	return jsonResult(res)
 }
 
-func waitFlag(b bool) string {
-	if b {
-		return "--wait"
+// resolveTarget mirrors cmd/apply.go's helper. Duplicated here so the
+// internal/mcp package doesn't import cmd/. Limited to local + ssh
+// since those are the only two intent.Target.Type values.
+func resolveTarget(parsed *intent.Intent) (target.Target, error) {
+	switch parsed.Target.Type {
+	case "ssh":
+		t := target.NewSSHTarget(parsed.Target.Host, parsed.Target.Port, parsed.Target.User, parsed.Target.IdentityFile)
+		if err := t.Connect(); err != nil {
+			return nil, err
+		}
+		return t, nil
+	default:
+		return target.NewLocalTarget(), nil
 	}
-	return ""
+}
+
+// resolveEnvVars mirrors cmd/apply.go's helper for the same reason.
+// Pulls the witness key out of the operator's environment by name.
+func resolveEnvVars(node *intent.NodeSpec) map[string]string {
+	env := map[string]string{}
+	if node.WitnessKeyEnv != "" {
+		if v := os.Getenv(node.WitnessKeyEnv); v != "" {
+			env[node.WitnessKeyEnv] = v
+		}
+	}
+	return env
 }
 
 func ptrTrue() *bool { v := true; return &v }

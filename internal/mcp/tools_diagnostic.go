@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tronprotocol/tron-deployment/internal/diagnosis"
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/state"
 )
@@ -196,17 +197,11 @@ func healthTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*mcp
 }
 
 func diagnoseTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*mcp.CallToolResult, any, error) {
-	// The full diagnose suite (sync_progress, peer_count, disk_space,
-	// port_listening, memory_usage) lives in internal/diagnosis but
-	// each check requires either a live target.Target connection or a
-	// docker exec. Wiring those into a fully in-process MCP tool is a
-	// non-trivial extraction. For now we do the lightweight subset
-	// that doesn't need a runtime: present a state snapshot + a
-	// pointer at the CLI for the deeper checks.
-	//
-	// TODO: extract internal/diagnosis CheckOpts into a constructor
-	// that takes a state.ManagedNode + a target factory so this MCP
-	// tool can run the full suite.
+	// Runs the same full check suite (sync_progress, peer_count,
+	// disk_space, port_listening, memory_usage, version) that
+	// `trond diagnose <name>` does, by reaching into
+	// internal/diagnosis directly. The earlier MCP version returned
+	// only a state-only subset; that gap is now closed.
 	store, err := state.NewStore(paths.State())
 	if err != nil {
 		return errResult(err)
@@ -220,45 +215,30 @@ func diagnoseTool(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*m
 		return errResult(notFound("diagnose", args.Name))
 	}
 
-	checks := []map[string]any{
-		{
-			"name":   "managed_in_state",
-			"status": "pass",
-			"message": fmt.Sprintf("known to trond: status=%s, runtime=%s",
-				node.Status, node.Runtime),
-		},
+	tgt, err := mcpResolveTargetFromNode(node)
+	if err != nil {
+		return errResult(err)
 	}
-	if node.Status != "running" {
-		checks = append(checks, map[string]any{
-			"name":    "process_running",
-			"status":  "fail",
-			"message": fmt.Sprintf("state.json reports status=%q; the node is not currently running", node.Status),
-			"suggestions": []string{
-				"Call the 'apply' tool with the original intent to (re)deploy",
-				"Check `docker ps` on the target for the actual container state",
-			},
-		})
-	} else {
-		checks = append(checks, map[string]any{
-			"name":    "process_running",
-			"status":  "pass",
-			"message": "state.json reports status=running",
-		})
+	if c, ok := any(tgt).(interface{ Close() error }); ok {
+		defer c.Close()
 	}
 
-	overall := "pass"
-	for _, c := range checks {
-		if c["status"] == "fail" {
-			overall = "fail"
-		} else if c["status"] == "warning" && overall != "fail" {
-			overall = "warning"
-		}
+	opts := diagnosis.CheckOpts{
+		NodeName: node.Name,
+		Runtime:  node.Runtime,
+		HTTPPort: node.HTTPPort,
+		GRPCPort: node.GRPCPort,
 	}
-	result := map[string]any{
-		"name":    args.Name,
-		"overall": overall,
-		"checks":  checks,
-		"note":    "MCP diagnose is a state-only subset. For the full check suite (sync_progress, peer_count, disk_space, port_listening) call `trond diagnose <name> -o json` from the shell.",
+
+	checkers := diagnosis.AllCheckers()
+	results := make([]diagnosis.CheckResult, 0, len(checkers))
+	for _, c := range checkers {
+		results = append(results, c.Run(ctx, tgt, opts))
 	}
-	return jsonResult(result)
+
+	return jsonResult(map[string]any{
+		"name":    node.Name,
+		"overall": diagnosis.OverallStatus(results),
+		"checks":  results,
+	})
 }

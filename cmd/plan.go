@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/tronprotocol/tron-deployment/internal/apply"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/render"
@@ -46,7 +47,7 @@ func runPlan(cmd *cobra.Command, args []string) error {
 
 	// 2. Compute intent hash
 	intentData, _ := os.ReadFile(planIntentPath)
-	intentHash := sha256hex(intentData)
+	intentHash := apply.IntentHashFromBytes(intentData)
 
 	// 3. Load current state
 	store, err := state.NewStore(statePath())
@@ -69,7 +70,7 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return exitWithError(outputFmt, "RENDER_ERROR", output.ExitGeneralError, err.Error())
 	}
-	configHash := sha256hex([]byte(hoconConfig))
+	configHash := apply.IntentHashFromBytes([]byte(hoconConfig))
 
 	// 5. Diff
 	var changes []planChange
