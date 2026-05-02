@@ -12,6 +12,12 @@ The agent-ergonomics arc lands across four sequenced PRs:
 **#153** (`trond mcp`) → **#154** (`trond recipe`).
 
 ### Added
+- (#156) JSON Schemas for `trond recipe list / show / run` outputs
+  (`schemas/output/recipe-{list,show,run}.schema.json`). Closes the
+  schema-coverage gap left by #154 — `trond schema "recipe run"
+  --output-only -o json` now returns the canonical RunResult shape
+  instead of empty. Bumps `SchemaVersion` to `1.1.0` (minor: new
+  schemas added, no existing schema modified).
 - (#154) `trond recipe list / show / run` — declarative multi-step
   workflow runner. Recipes are YAML files in `recipes/*.yaml` (also
   embedded via go:embed) that codify the canonical AGENTS.md
