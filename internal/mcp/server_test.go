@@ -246,27 +246,31 @@ func TestDestructiveTools_HaveDestructiveHint(t *testing.T) {
 	}
 }
 
-func TestApply_ReturnsNotImplementedEnvelope(t *testing.T) {
+func TestApply_RejectsBadIntentPath(t *testing.T) {
+	// Apply now runs the real internal/apply pipeline (cmd/apply
+	// extraction landed). The stub-tested NOT_IMPLEMENTED_VIA_MCP
+	// path is gone. Replace with a smaller test that exercises the
+	// front-end validation without needing a real Docker target:
+	// pass a non-existent intent path and confirm we surface a
+	// VALIDATION_ERROR envelope rather than a panic.
 	session, cleanup := newConnectedPair(t)
 	defer cleanup()
 
-	// Use a real example intent so intent.Load doesn't fail before we
-	// reach the stub. examples/nile-fullnode.yaml is small + complete.
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      "apply",
-		Arguments: json.RawMessage(`{"path":"../../examples/nile-fullnode.yaml"}`),
+		Arguments: json.RawMessage(`{"path":"/nonexistent/intent.yaml"}`),
 	})
 	if err != nil {
 		t.Fatalf("CallTool apply: %v", err)
 	}
 	if !res.IsError {
-		t.Fatal("apply stub should set IsError=true while in-process apply is unimplemented")
+		t.Fatal("apply with bogus intent path should set IsError=true")
 	}
 	body := extractText(t, res)
 	var env map[string]any
 	_ = json.Unmarshal([]byte(body), &env)
-	if env["error_code"] != "NOT_IMPLEMENTED_VIA_MCP" {
-		t.Errorf("expected error_code=NOT_IMPLEMENTED_VIA_MCP, got %v", env["error_code"])
+	if env["error_code"] != "VALIDATION_ERROR" {
+		t.Errorf("expected error_code=VALIDATION_ERROR, got %v", env["error_code"])
 	}
 }
 
