@@ -42,11 +42,9 @@ func registerLifecycleTools(s *mcp.Server) {
 	// auto_approve=true by default — the LLM has to explicitly set it
 	// after the user has approved the plan diff.
 	mcp.AddTool(s, &mcp.Tool{
-		Name:  "apply",
-		Title: "Deploy or update a node",
-		Description: `Idempotent deploy. Re-running with the same intent is a no-op. With auto_approve=false (default), changes to an already-deployed node return error_code=HUMAN_REQUIRED — the agent must surface the diff (call 'plan' first), get user approval, then re-call 'apply' with auto_approve=true. With wait=true, blocks until the node's HTTP API responds or wait_timeout elapses.
-
-NOTE: this MCP tool currently returns the inputs that would be passed to the CLI; full in-process apply requires extracting cmd/apply.go's RunE into a pure function (tracked as a follow-up). For now, MCP-driven apply should proxy to a shell call. See AGENTS.md "Workflow 1" for the canonical chain.`,
+		Name:        "apply",
+		Title:       "Deploy or update a node",
+		Description: `Idempotent in-process deploy via internal/apply.Apply (the same pure function the CLI uses). Re-running with the same intent is a no-op (returns outcome="no_change"). With auto_approve=false (default), changes to an already-deployed node return error_code=HUMAN_REQUIRED — the agent must surface the diff (call 'plan' first), get user approval, then re-call 'apply' with auto_approve=true. With wait=true, blocks until the node's HTTP API responds 2xx or wait_timeout elapses (default 5m); a wait failure leaves the deploy successful but reports ready=false in the result.`,
 		Annotations: &mcp.ToolAnnotations{
 			DestructiveHint: ptrTrue(),
 			IdempotentHint:  true,

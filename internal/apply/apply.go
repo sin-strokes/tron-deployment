@@ -35,6 +35,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
@@ -276,59 +278,31 @@ func IntentHashFromBytes(data []byte) string {
 // detectJDK probes the target for an installed Java version. Returns
 // 17 when detection fails — most TRON 4.x builds ship with JDK 17
 // tuning defaults and the G1 args we select are safe across modern
-// JDKs. Mirrors cmd/apply.go's helper.
+// JDKs. Mirrors cmd/apply.go's helper. Uses stdlib strings/strconv
+// directly; the earlier inline-helpers version had subtle behavioral
+// drift from strconv.Atoi (e.g. silently returning 0 on whitespace).
 func detectJDK(ctx context.Context, tgt target.Target) int {
 	out, err := tgt.Exec(ctx, "java", "-version")
 	if err != nil {
 		return 17
 	}
 	s := string(out)
-	idx := indexByte(s, '"')
+	idx := strings.IndexByte(s, '"')
 	if idx < 0 {
 		return 17
 	}
 	rest := s[idx+1:]
-	end := indexByte(rest, '"')
+	end := strings.IndexByte(rest, '"')
 	if end <= 0 {
 		return 17
 	}
-	ver := rest[:end]
-	if hasPrefix(ver, "1.") {
-		ver = ver[2:]
-	}
-	if dot := indexByte(ver, '.'); dot > 0 {
+	ver := strings.TrimPrefix(rest[:end], "1.")
+	if dot := strings.IndexByte(ver, '.'); dot > 0 {
 		ver = ver[:dot]
 	}
-	n := atoiSafe(ver)
-	if n == 0 {
+	n, err := strconv.Atoi(strings.TrimSpace(ver))
+	if err != nil || n <= 0 {
 		return 17
-	}
-	return n
-}
-
-// Tiny stdlib re-exports kept inline so the package imports stay
-// trim and the functions read clearly.
-func indexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
-}
-func hasPrefix(s, p string) bool {
-	return len(s) >= len(p) && s[:len(p)] == p
-}
-func atoiSafe(s string) int {
-	if s == "" {
-		return 0
-	}
-	n := 0
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0
-		}
-		n = n*10 + int(c-'0')
 	}
 	return n
 }
