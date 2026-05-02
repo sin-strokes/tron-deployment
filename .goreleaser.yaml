@@ -113,6 +113,14 @@ nfpms:
 # and Linuxbrew. Requires the GitHub user to maintain a `homebrew-tap`
 # repo under the same org; goreleaser bumps the formula automatically
 # on every release.
+#
+# TODO: goreleaser is phasing out `brews` in favor of `homebrew_casks`.
+# Casks are traditionally for GUI/.app installs but Homebrew has been
+# pushing CLI tools through them too. Migration changes the user-facing
+# install command from `brew install` to `brew install --cask` and
+# requires retesting against Linuxbrew. Hold until goreleaser actually
+# removes brews — it's been "phasing out" for >1 year and the formula
+# path is still the cleaner UX for CLI tools.
 brews:
   - name: trond
     repository:
@@ -129,43 +137,25 @@ brews:
       generate_completions_from_executable(bin/"trond", "completion")
 
 # Docker image — useful for CI runners and one-off "exec into a trond"
-# scenarios. Multi-arch via buildx; built from the same binaries that
-# the archive contains.
-dockers:
-  - id: trond-amd64
-    image_templates:
-      - "tronprotocol/trond:{{ .Version }}-amd64"
-      - "tronprotocol/trond:latest-amd64"
-    use: buildx
-    goos: linux
-    goarch: amd64
+# scenarios. The dockers_v2 block replaced the older `dockers` +
+# `docker_manifests` pair: it builds a single multi-arch manifest in
+# one pass instead of two per-arch builds plus a manual manifest fan-in.
+# `platforms` enumerates the targets; goreleaser fans out to buildx.
+dockers_v2:
+  - id: trond
+    images:
+      - "tronprotocol/trond"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
+    platforms:
+      - linux/amd64
+      - linux/arm64
     dockerfile: Dockerfile.release
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.source=https://github.com/tronprotocol/tron-deployment"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-  - id: trond-arm64
-    image_templates:
-      - "tronprotocol/trond:{{ .Version }}-arm64"
-      - "tronprotocol/trond:latest-arm64"
-    use: buildx
-    goos: linux
-    goarch: arm64
-    dockerfile: Dockerfile.release
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.source=https://github.com/tronprotocol/tron-deployment"
-
-docker_manifests:
-  - name_template: "tronprotocol/trond:{{ .Version }}"
-    image_templates:
-      - "tronprotocol/trond:{{ .Version }}-amd64"
-      - "tronprotocol/trond:{{ .Version }}-arm64"
-  - name_template: "tronprotocol/trond:latest"
-    image_templates:
-      - "tronprotocol/trond:latest-amd64"
-      - "tronprotocol/trond:latest-arm64"
+    labels:
+      org.opencontainers.image.source: "https://github.com/tronprotocol/tron-deployment"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
 
 release:
   github:
