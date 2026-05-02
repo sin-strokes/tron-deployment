@@ -85,6 +85,9 @@ var DefaultSchemaLookup = map[string]string{
 	"trond snapshot list":     "snapshot-list",
 	"trond snapshot download": "snapshot-download",
 	"trond snapshot jobs":     "snapshot-jobs",
+	"trond recipe list":       "recipe-list",
+	"trond recipe show":       "recipe-show",
+	"trond recipe run":        "recipe-run",
 }
 
 // childCommands recursively gathers cobra children, skipping the

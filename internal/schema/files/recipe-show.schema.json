@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/recipe-show.schema.json",
+  "title": "trond recipe show output",
+  "description": "The Recipe struct serialised verbatim. Schema mirrors internal/recipe.Recipe so agents reading this output can program against the same shape the CLI accepts as YAML.",
+  "type": "object",
+  "required": ["name", "description", "steps"],
+  "properties": {
+    "name":        { "type": "string" },
+    "description": { "type": "string" },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name":        { "type": "string" },
+          "type":        { "type": "string", "enum": ["string", "int", "bool", "path"] },
+          "required":    { "type": "boolean" },
+          "default":     { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "rollback": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["id", "command"],
+      "properties": {
+        "id":          { "type": "string" },
+        "description": { "type": "string" },
+        "command":     { "type": "string", "description": "Trond subcommand path, e.g. 'config validate' or 'snapshot download'." },
+        "args":        { "type": "array", "items": { "type": "string" } },
+        "on_failure":  { "type": "string", "enum": ["abort", "continue", "rollback"], "description": "Default = abort." },
+        "persist":     { "type": "array", "items": { "type": "string" }, "description": "Field names from this step's stdout to expose to subsequent steps via {{ steps.<id>.<name> }}." },
+        "skip":        { "type": "string", "description": "Template; step is skipped when this evaluates to 'true'." }
+      }
+    }
+  }
+}

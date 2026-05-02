@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/recipe-list.schema.json",
+  "title": "trond recipe list output",
+  "type": "object",
+  "required": ["recipes"],
+  "properties": {
+    "recipes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "step_count"],
+        "properties": {
+          "name":        { "type": "string", "description": "Recipe identifier; pass to `recipe show` / `recipe run`." },
+          "description": { "type": "string", "description": "First paragraph of the recipe's YAML description." },
+          "params":      { "type": "string", "description": "Human summary like '3 total / 2 required'." },
+          "step_count":  { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}
