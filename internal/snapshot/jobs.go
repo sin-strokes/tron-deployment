@@ -109,9 +109,18 @@ func RemoveJob(dir, id string) error {
 	return nil
 }
 
-// IsRunning probes whether a PID is still alive. We use kill(0) which
-// returns nil for live processes regardless of signal handling — the
-// portable Unix idiom for liveness checks.
+// IsRunning probes whether a PID is still alive via kill(0). The
+// canonical Unix idiom has three outcomes:
+//
+//	nil   → the process exists and we can signal it (alive)
+//	EPERM → the process exists but a different user owns it (alive,
+//	        but a child of root or a sandboxed process — happens often
+//	        on macOS where launchd-managed daemons reparent under PID 1)
+//	ESRCH → no such process (dead)
+//
+// Both nil and EPERM mean "alive". Treating EPERM as "dead" misclassifies
+// detached snapshot downloads that have legitimately reparented to
+// init/launchd after the trond invocation that spawned them exited.
 func IsRunning(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -121,10 +130,14 @@ func IsRunning(pid int) bool {
 		return false
 	}
 	// On Unix, FindProcess always succeeds; we have to actually signal.
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		return false
+	err = proc.Signal(syscall.Signal(0))
+	if err == nil {
+		return true
 	}
-	return true
+	if errors.Is(err, syscall.EPERM) {
+		return true
+	}
+	return false
 }
 
 // Status fills in live fields by stat'ing the log file and probing the

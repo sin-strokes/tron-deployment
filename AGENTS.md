@@ -221,6 +221,16 @@ done
 trond apply --intent intent-with-snapshot.yaml --auto-approve --wait -o json
 ```
 
+When the download finishes, its manifest + log stay under
+`~/.trond/snapshots/<id>.{json,log}` so you can audit later. Stale
+ones (default: stopped + older than 7 days) can be reclaimed with:
+
+```bash
+trond snapshot prune --dry-run            # preview
+trond snapshot prune                      # default policy
+trond snapshot prune --all -o json        # ignore age, return JSON
+```
+
 The intent needs `storage.data: /srv/tron/<node>/output-directory` so
 the bind mount lines up with where the tarball extracts. See
 `examples/mainnet-fullnode-snapshot.yaml`.
