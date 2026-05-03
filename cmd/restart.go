@@ -22,10 +22,9 @@ func init() {
 
 func runRestart(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	outputFmt, _ := cmd.Flags().GetString("output")
 	start := time.Now()
 
-	nc, err := resolveNodeContext(name, outputFmt)
+	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err
 	}
@@ -33,7 +32,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 
 	if err := nc.Runtime.Stop(cmd.Context(), name); err != nil {
 		writeAudit(auditEvent{Command: "restart", Node: name, Target: nc.Target.String(), Result: "error", ErrorCode: "RESTART_ERROR", Start: start})
-		return exitWithError(outputFmt, "RESTART_ERROR", output.ExitGeneralError,
+		return exitWithError("RESTART_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Failed to stop %s: %v", name, err))
 	}
 
@@ -41,7 +40,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		nc.Node.Status = "error"
 		nc.SaveState()
 		writeAudit(auditEvent{Command: "restart", Node: name, Target: nc.Target.String(), Result: "error", ErrorCode: "RESTART_ERROR", Start: start})
-		return exitWithError(outputFmt, "RESTART_ERROR", output.ExitGeneralError,
+		return exitWithError("RESTART_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Failed to start %s after stop: %v", name, err))
 	}
 
@@ -49,6 +48,6 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	nc.SaveState()
 	writeAudit(auditEvent{Command: "restart", Node: name, Target: nc.Target.String(), Result: "success", Start: start})
 
-	writeResult(outputFmt, map[string]any{"name": name, "status": "running"})
+	writeResult(map[string]any{"name": name, "status": "running"})
 	return nil
 }

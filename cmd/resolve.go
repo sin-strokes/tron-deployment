@@ -47,7 +47,7 @@ func (nc *nodeContext) runtimeExec(ctx context.Context, bin string, args ...stri
 }
 
 // resolveNodeContext loads a node from state and constructs its target and runtime.
-func resolveNodeContext(name, outputFmt string) (*nodeContext, error) {
+func resolveNodeContext(name string) (*nodeContext, error) {
 	store, err := state.NewStore(statePath())
 	if err != nil {
 		return nil, err
@@ -60,7 +60,7 @@ func resolveNodeContext(name, outputFmt string) (*nodeContext, error) {
 
 	node := store.GetNode(deployState, name)
 	if node == nil {
-		return nil, exitWithError(outputFmt, "NODE_NOT_FOUND", output.ExitGeneralError,
+		return nil, exitWithError("NODE_NOT_FOUND", output.ExitGeneralError,
 			fmt.Sprintf("Node %q not found in state", name),
 			"Run: trond list",
 			"Deploy first: trond apply --intent <file>")
@@ -68,7 +68,7 @@ func resolveNodeContext(name, outputFmt string) (*nodeContext, error) {
 
 	tgt, err := resolveTargetFromNode(node)
 	if err != nil {
-		return nil, exitWithError(outputFmt, "TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
+		return nil, exitWithError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
 	}
 
 	rt := resolveRuntimeForNode(node, tgt)

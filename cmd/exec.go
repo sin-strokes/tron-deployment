@@ -55,8 +55,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 			"usage: trond exec <node> -- <cmd> [args...]")
 	}
 
-	outputFmt, _ := cmd.Flags().GetString("output")
-	nc, err := resolveNodeContext(nodeName, outputFmt)
+	nc, err := resolveNodeContext(nodeName)
 	if err != nil {
 		return err
 	}

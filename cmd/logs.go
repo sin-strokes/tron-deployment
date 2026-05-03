@@ -31,9 +31,8 @@ func init() {
 
 func runLogs(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	outputFmt, _ := cmd.Flags().GetString("output")
 
-	nc, err := resolveNodeContext(name, outputFmt)
+	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err
 	}
@@ -44,7 +43,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		Follow: logsFollow,
 	})
 	if err != nil {
-		return exitWithError(outputFmt, "LOGS_ERROR", output.ExitGeneralError,
+		return exitWithError("LOGS_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Failed to get logs for %s: %v", name, err))
 	}
 	defer reader.Close()

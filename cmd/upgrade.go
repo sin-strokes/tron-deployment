@@ -28,10 +28,9 @@ func init() {
 
 func runUpgrade(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	outputFmt, _ := cmd.Flags().GetString("output")
 	start := time.Now()
 
-	nc, err := resolveNodeContext(name, outputFmt)
+	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err
 	}
@@ -42,7 +41,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	// Stop the node
 	if err := nc.Runtime.Stop(cmd.Context(), name); err != nil {
 		writeAudit(auditEvent{Command: "upgrade", Node: name, Target: nc.Target.String(), Result: "error", ErrorCode: "UPGRADE_ERROR", Start: start})
-		return exitWithError(outputFmt, "UPGRADE_ERROR", output.ExitGeneralError,
+		return exitWithError("UPGRADE_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Failed to stop %s for upgrade: %v", name, err))
 	}
 
@@ -72,7 +71,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		if rollbackErr != nil {
 			msg = fmt.Sprintf("%s; rollback start ALSO failed: %v", msg, rollbackErr)
 		}
-		return exitWithError(outputFmt, "UPGRADE_ERROR", output.ExitGeneralError,
+		return exitWithError("UPGRADE_ERROR", output.ExitGeneralError,
 			msg,
 			"Check logs: trond logs "+name,
 			"Run diagnostics: trond diagnose "+name)
@@ -82,7 +81,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	nc.SaveState()
 	writeAudit(auditEvent{Command: "upgrade", Node: name, Target: nc.Target.String(), Result: "success", Start: start})
 
-	writeResult(outputFmt, map[string]any{
+	writeResult(map[string]any{
 		"name":             name,
 		"status":           "running",
 		"version":          upgradeVersion,

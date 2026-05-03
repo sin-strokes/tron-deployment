@@ -98,7 +98,7 @@ func runWait(cmd *cobra.Command, args []string) error {
 			"specify exactly one of --port, --http, --exec")
 	}
 
-	nc, err := resolveNodeContext(nodeName, outputFmt)
+	nc, err := resolveNodeContext(nodeName)
 	if err != nil {
 		return err
 	}
