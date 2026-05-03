@@ -102,6 +102,10 @@
       "hash": "1d83dffdd94f5d1d59806da8469cb042e5af3b021d1d9e67b5f6295975fa08f9"
     },
     {
+      "name": "verify-config",
+      "hash": "89f43f7987af42678c0e0f672142170ed659a45a040748f064f3552a5d50d42f"
+    },
+    {
       "name": "version",
       "hash": "463fe0ab7863c7f07e10fce7bee644af9d084703cc1046c285e26a548f29f8c7"
     }

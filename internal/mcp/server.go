@@ -65,6 +65,7 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, trondVersion string) 
 	registerDiagnosticTools(server)
 	registerSnapshotTools(server)
 	registerKnowledgeTools(server)
+	registerDriftTools(server)
 	registerHealTools(server)
 
 	// Beyond tools, MCP exposes resources (read-only data the agent
