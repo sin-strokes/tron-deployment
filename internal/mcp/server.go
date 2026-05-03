@@ -68,9 +68,14 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, trondVersion string) 
 	registerHealTools(server)
 
 	// Beyond tools, MCP exposes resources (read-only data the agent
-	// attaches to a conversation) and resource templates (per-node
-	// dynamic URIs).
+	// can attach to a conversation) and prompts (pre-baked workflow
+	// templates the user invokes via slash-commands). Resources let
+	// the agent see state.json + audit.log + the schema manifest
+	// without per-call tool invocations; prompts encode AGENTS.md's
+	// canonical workflows so a fresh agent session lands on the
+	// right tool sequence the first time.
 	registerResources(server)
+	registerPrompts(server)
 
 	// MCP's stdio transport is a thin wrapper around io.Reader/Writer
 	// pairs; tests pass net.Pipe() ends, real use passes os.Stdin/Stdout.
@@ -88,13 +93,28 @@ tools:
                 preflight, knowledge, snapshot_sources, snapshot_list,
                 snapshot_jobs
   Validation:   config_validate, config_render, plan, diagnose
-  Destructive:  apply, snapshot_download
+  Destructive:  apply, snapshot_download, auto_heal
 
 For deploy / diagnose / snapshot / private-network workflows, follow
 the canonical chains documented in AGENTS.md (the TRON deployment
 repo's agent guide). Always validate intent files with config_validate
 before plan/apply. Pass auto_approve=true to apply only when the user
 has explicitly approved the diff shown by plan.
+
+Beyond tools, this server exposes:
+
+  Resources (read-only data — attach to context, don't tool-call):
+    trond://state                     — current state.json
+    trond://audit-log                 — last 200 audit log entries
+    trond://schema-manifest           — all output schemas + version
+    trond://nodes/{name}/endpoints    — one node's endpoints + ports
+    trond://nodes/{name}/conf         — one node's live HOCON conf
+
+  Prompts (slash-command workflows the user picks):
+    deploy_fullnode         — validate → plan → apply --wait → status
+    diagnose_failing_node   — status → diagnose → logs → suggest
+    setup_private_network   — multi-node bootstrap with SR_PRIVATE_KEY
+    recover_failed_upgrade  — diagnose → rollback → verify
 
 Long-running tools emit MCP progress notifications; surface those to
 the user.`
@@ -106,8 +126,6 @@ func errResult(err error) (*mcp.CallToolResult, any, error) {
 	envelope := envelopeFromError(err)
 	body, marshalErr := json.MarshalIndent(envelope, "", "  ")
 	if marshalErr != nil {
-		// This shouldn't happen — envelopes are plain maps. Fall back
-		// to a textual error so the agent still sees something.
 		body = fmt.Appendf(nil, "trond error (envelope marshal failed: %v)\n%v", marshalErr, err)
 	}
 	return &mcp.CallToolResult{
@@ -117,9 +135,6 @@ func errResult(err error) (*mcp.CallToolResult, any, error) {
 }
 
 // envelopeFromError mirrors the shape in schemas/output/error.schema.json.
-// We match on output.StructuredError when possible to preserve the
-// trond error_code and suggestions[]; for plain errors we fall back to
-// a generic INTERNAL_ERROR.
 func envelopeFromError(err error) map[string]any {
 	if se, ok := err.(*output.StructuredError); ok {
 		out := map[string]any{
@@ -140,8 +155,7 @@ func envelopeFromError(err error) map[string]any {
 }
 
 // jsonResult marshals a value into a CallToolResult with a single
-// JSON content block. Used by every read-side tool that returns a
-// structured payload to the LLM.
+// JSON content block.
 func jsonResult(v any) (*mcp.CallToolResult, any, error) {
 	body, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

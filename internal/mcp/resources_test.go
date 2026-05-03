@@ -3,10 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/tronprotocol/tron-deployment/internal/paths"
 )
 
 // TestResources_StaticListAndRead exercises the three fixed-URI
@@ -68,6 +72,42 @@ func TestResources_StaticListAndRead(t *testing.T) {
 	}
 }
 
+// TestResources_AuditLogTail asserts the audit-log resource caps at
+// the documented 200 lines, even when the on-disk audit.log has more.
+func TestResources_AuditLogTail(t *testing.T) {
+	session, cleanup := newConnectedPair(t)
+	defer cleanup()
+
+	logPath := paths.AuditLog()
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	var sb strings.Builder
+	const total = 350
+	for i := range total {
+		sb.WriteString(`{"timestamp":"2026-05-03T00:00:00Z","command":"x","result":"success","target":"local","line":`)
+		sb.WriteString(itoaSimple(i))
+		sb.WriteString("}\n")
+	}
+	if err := os.WriteFile(logPath, []byte(sb.String()), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+
+	out, err := session.ReadResource(context.Background(),
+		&mcpsdk.ReadResourceParams{URI: "trond://audit-log"})
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	got := strings.Count(out.Contents[0].Text, "\n")
+	if got > auditLogTailMax {
+		t.Errorf("audit-log resource returned %d lines, max is %d",
+			got, auditLogTailMax)
+	}
+	if got == 0 {
+		t.Errorf("audit-log resource returned 0 lines despite %d on disk", total)
+	}
+}
+
 // TestResources_TemplatesListed verifies that ListResourceTemplates
 // surfaces the per-node URI templates we registered.
 func TestResources_TemplatesListed(t *testing.T) {
@@ -93,8 +133,7 @@ func TestResources_TemplatesListed(t *testing.T) {
 }
 
 // TestNodeNameFromURI pins the URI parser used by both per-node
-// resource templates. Bad shapes must fail loud rather than read
-// the wrong node.
+// resource templates.
 func TestNodeNameFromURI(t *testing.T) {
 	cases := []struct {
 		uri     string
@@ -118,4 +157,16 @@ func TestNodeNameFromURI(t *testing.T) {
 			t.Errorf("uri=%q: got %q, want %q", tc.uri, got, tc.want)
 		}
 	}
+}
+
+func itoaSimple(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var b []byte
+	for i > 0 {
+		b = append([]byte{byte('0' + i%10)}, b...)
+		i /= 10
+	}
+	return string(b)
 }

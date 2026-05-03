@@ -12,6 +12,16 @@ import (
 // importable from internal/mcp without a cycle. Callers that want
 // the full command/flag manifest should shell out to
 // `trond schema -o json`.
+//
+// Shape:
+//
+//	{
+//	  "schema_version": "1.x.0",
+//	  "schemas": {
+//	    "apply":  { ...full schema object... },
+//	    ...
+//	  }
+//	}
 func schemaManifestJSON() (string, error) {
 	out := struct {
 		SchemaVersion string                    `json:"schema_version"`

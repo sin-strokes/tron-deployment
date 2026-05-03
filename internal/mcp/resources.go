@@ -16,11 +16,12 @@ import (
 // registerResources wires read-only data sources as MCP resources.
 // Resources are conceptually different from tools: tools are
 // "actions" (verb), resources are "data" (noun). MCP-aware clients
-// like Claude Desktop surface resources in a file-system-like UI.
+// like Claude Desktop surface resources in a file-system-like UI
+// the user can attach to a conversation.
 //
 // Static resources (one fixed URI):
 //
-//   - trond://state             — full state.json
+//   - trond://state             — full state.json (every managed node)
 //   - trond://audit-log         — last 200 audit log entries
 //   - trond://schema-manifest   — every embedded output schema + version
 //
@@ -36,7 +37,7 @@ func registerResources(s *mcp.Server) {
 	s.AddResource(&mcp.Resource{
 		URI:         "trond://state",
 		Name:        "state.json",
-		Description: "The state.json file at $TROND_STATE_DIR (or ~/.trond). Every managed node, target, runtime, ports, labels.",
+		Description: "The state.json file at $TROND_STATE_DIR (or ~/.trond). One row per managed node — name, version, target, runtime, ports.",
 		MIMEType:    "application/json",
 	}, readStateResource)
 
@@ -64,7 +65,7 @@ func registerResources(s *mcp.Server) {
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		URITemplate: "trond://nodes/{name}/conf",
 		Name:        "node live HOCON conf",
-		Description: "The .conf file currently in use by the node's running container (docker exec cat). Read-only — use verify_config to compare against an intent.",
+		Description: "The .conf file currently in use by the node's running container (docker exec cat). Read-only.",
 		MIMEType:    "text/plain",
 	}, readNodeConfResource)
 }
@@ -130,8 +131,6 @@ func readSchemaManifestResource(_ context.Context, req *mcp.ReadResourceRequest)
 	}, nil
 }
 
-// readNodeEndpointsResource serves the per-node endpoints sub-resource.
-// URI shape: trond://nodes/<name>/endpoints
 func readNodeEndpointsResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	name, err := nodeNameFromURI(req.Params.URI, "/endpoints")
 	if err != nil {
@@ -165,8 +164,6 @@ func readNodeEndpointsResource(_ context.Context, req *mcp.ReadResourceRequest) 
 	}, nil
 }
 
-// readNodeConfResource serves the live HOCON conf for one node by
-// docker-exec-cat'ing the file inside the container.
 func readNodeConfResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	name, err := nodeNameFromURI(req.Params.URI, "/conf")
 	if err != nil {
