@@ -38,6 +38,8 @@ import (
 //	        snapshot-download, snapshot-jobs, error envelope).
 //	1.1.0 — add recipe-list / recipe-show / recipe-run schemas (no
 //	        changes to existing schemas).
+//	1.2.0 — add verify-config + auto-heal schemas (new `trond
+//	        verify-config` and `trond auto-heal` commands).
 const SchemaVersion = "1.2.0"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output

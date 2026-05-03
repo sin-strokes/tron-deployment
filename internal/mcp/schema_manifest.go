@@ -7,8 +7,8 @@ import (
 )
 
 // schemaManifestJSON returns a compact manifest exposed via the
-// `trond://schema-manifest` resource. We intentionally avoid pulling
-// the full cobra-tree walker (lives in cmd/schema.go) so this stays
+// `trond://schema-manifest` resource. We avoid pulling the full
+// cobra-tree walker (lives in cmd/schema.go) so this stays
 // importable from internal/mcp without a cycle. Callers that want
 // the full command/flag manifest should shell out to
 // `trond schema -o json`.
@@ -16,10 +16,9 @@ import (
 // Shape:
 //
 //	{
-//	  "schema_version": "1.1.0",
+//	  "schema_version": "1.x.0",
 //	  "schemas": {
 //	    "apply":  { ...full schema object... },
-//	    "doctor": { ... },
 //	    ...
 //	  }
 //	}

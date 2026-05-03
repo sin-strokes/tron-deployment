@@ -66,11 +66,7 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, trondVersion string) 
 	registerSnapshotTools(server)
 	registerKnowledgeTools(server)
 	registerDriftTools(server)
-
-	// Beyond tools, MCP exposes resources (read-only data agents
-	// attach to context) and prompts (slash-command workflows).
-	registerResources(server)
-	registerPrompts(server)
+	registerHealTools(server)
 
 	// Beyond tools, MCP exposes resources (read-only data the agent
 	// can attach to a conversation) and prompts (pre-baked workflow
@@ -98,7 +94,7 @@ tools:
                 preflight, knowledge, snapshot_sources, snapshot_list,
                 snapshot_jobs
   Validation:   config_validate, config_render, plan, diagnose
-  Destructive:  apply, snapshot_download
+  Destructive:  apply, snapshot_download, auto_heal
 
 For deploy / diagnose / snapshot / private-network workflows, follow
 the canonical chains documented in AGENTS.md (the TRON deployment
@@ -109,9 +105,11 @@ has explicitly approved the diff shown by plan.
 Beyond tools, this server exposes:
 
   Resources (read-only data — attach to context, don't tool-call):
-    trond://state            — current state.json (every managed node)
-    trond://audit-log        — last 200 audit log entries (JSONL)
-    trond://schema-manifest  — all output schemas + SchemaVersion
+    trond://state                     — current state.json
+    trond://audit-log                 — last 200 audit log entries
+    trond://schema-manifest           — all output schemas + version
+    trond://nodes/{name}/endpoints    — one node's endpoints + ports
+    trond://nodes/{name}/conf         — one node's live HOCON conf
 
   Prompts (slash-command workflows the user picks):
     deploy_fullnode         — validate → plan → apply --wait → status
@@ -129,8 +127,6 @@ func errResult(err error) (*mcp.CallToolResult, any, error) {
 	envelope := envelopeFromError(err)
 	body, marshalErr := json.MarshalIndent(envelope, "", "  ")
 	if marshalErr != nil {
-		// This shouldn't happen — envelopes are plain maps. Fall back
-		// to a textual error so the agent still sees something.
 		body = fmt.Appendf(nil, "trond error (envelope marshal failed: %v)\n%v", marshalErr, err)
 	}
 	return &mcp.CallToolResult{
@@ -140,9 +136,6 @@ func errResult(err error) (*mcp.CallToolResult, any, error) {
 }
 
 // envelopeFromError mirrors the shape in schemas/output/error.schema.json.
-// We match on output.StructuredError when possible to preserve the
-// trond error_code and suggestions[]; for plain errors we fall back to
-// a generic INTERNAL_ERROR.
 func envelopeFromError(err error) map[string]any {
 	if se, ok := err.(*output.StructuredError); ok {
 		out := map[string]any{
@@ -163,8 +156,7 @@ func envelopeFromError(err error) map[string]any {
 }
 
 // jsonResult marshals a value into a CallToolResult with a single
-// JSON content block. Used by every read-side tool that returns a
-// structured payload to the LLM.
+// JSON content block.
 func jsonResult(v any) (*mcp.CallToolResult, any, error) {
 	body, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

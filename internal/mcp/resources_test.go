@@ -13,10 +13,9 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 )
 
-// TestResources_ListAndRead exercises every resource the server
-// exposes: list shows them all, each reads cleanly, content matches
-// the documented MIME type.
-func TestResources_ListAndRead(t *testing.T) {
+// TestResources_StaticListAndRead exercises the three fixed-URI
+// resources: state, audit-log, schema-manifest.
+func TestResources_StaticListAndRead(t *testing.T) {
 	session, cleanup := newConnectedPair(t)
 	defer cleanup()
 
@@ -24,9 +23,9 @@ func TestResources_ListAndRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListResources: %v", err)
 	}
-	got := map[string]*mcpsdk.Resource{}
+	got := map[string]bool{}
 	for _, r := range res.Resources {
-		got[r.URI] = r
+		got[r.URI] = true
 	}
 	want := []string{
 		"trond://state",
@@ -34,7 +33,7 @@ func TestResources_ListAndRead(t *testing.T) {
 		"trond://schema-manifest",
 	}
 	for _, uri := range want {
-		if _, ok := got[uri]; !ok {
+		if !got[uri] {
 			t.Errorf("resource %q missing from ListResources", uri)
 		}
 	}
@@ -50,9 +49,6 @@ func TestResources_ListAndRead(t *testing.T) {
 				t.Fatalf("ReadResource(%s) returned no contents", uri)
 			}
 			body := out.Contents[0]
-			// state + schema-manifest should produce JSON; audit-log
-			// is JSONL (which is also a valid empty string for a
-			// fresh state dir).
 			switch uri {
 			case "trond://state", "trond://schema-manifest":
 				var v any
@@ -60,7 +56,6 @@ func TestResources_ListAndRead(t *testing.T) {
 					t.Errorf("%s body not JSON: %v\n%s", uri, err, body.Text)
 				}
 			case "trond://audit-log":
-				// Empty is fine — fresh state. Otherwise must parse line-by-line.
 				for _, line := range strings.Split(body.Text, "\n") {
 					line = strings.TrimSpace(line)
 					if line == "" {
@@ -79,13 +74,10 @@ func TestResources_ListAndRead(t *testing.T) {
 
 // TestResources_AuditLogTail asserts the audit-log resource caps at
 // the documented 200 lines, even when the on-disk audit.log has more.
-// Without this guard, an operator with months of audit history would
-// blow out the agent's context window.
 func TestResources_AuditLogTail(t *testing.T) {
 	session, cleanup := newConnectedPair(t)
 	defer cleanup()
 
-	// Plant > 200 lines of synthetic JSONL into audit.log.
 	logPath := paths.AuditLog()
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -113,6 +105,57 @@ func TestResources_AuditLogTail(t *testing.T) {
 	}
 	if got == 0 {
 		t.Errorf("audit-log resource returned 0 lines despite %d on disk", total)
+	}
+}
+
+// TestResources_TemplatesListed verifies that ListResourceTemplates
+// surfaces the per-node URI templates we registered.
+func TestResources_TemplatesListed(t *testing.T) {
+	session, cleanup := newConnectedPair(t)
+	defer cleanup()
+
+	res, err := session.ListResourceTemplates(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListResourceTemplates: %v", err)
+	}
+	got := map[string]bool{}
+	for _, rt := range res.ResourceTemplates {
+		got[rt.URITemplate] = true
+	}
+	for _, want := range []string{
+		"trond://nodes/{name}/endpoints",
+		"trond://nodes/{name}/conf",
+	} {
+		if !got[want] {
+			t.Errorf("template %q missing", want)
+		}
+	}
+}
+
+// TestNodeNameFromURI pins the URI parser used by both per-node
+// resource templates.
+func TestNodeNameFromURI(t *testing.T) {
+	cases := []struct {
+		uri     string
+		suffix  string
+		want    string
+		wantErr bool
+	}{
+		{"trond://nodes/my-fullnode/endpoints", "/endpoints", "my-fullnode", false},
+		{"trond://nodes/my-fullnode/conf", "/conf", "my-fullnode", false},
+		{"trond://nodes//endpoints", "/endpoints", "", true},
+		{"trond://nodes/a/b/endpoints", "/endpoints", "", true},
+		{"trond://nodes/x?y/endpoints", "/endpoints", "", true},
+		{"trond://state", "/endpoints", "", true},
+	}
+	for _, tc := range cases {
+		got, err := nodeNameFromURI(tc.uri, tc.suffix)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("uri=%q: err=%v, wantErr=%v", tc.uri, err, tc.wantErr)
+		}
+		if got != tc.want {
+			t.Errorf("uri=%q: got %q, want %q", tc.uri, got, tc.want)
+		}
 	}
 }
 

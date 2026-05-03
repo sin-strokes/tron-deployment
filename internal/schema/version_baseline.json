@@ -6,6 +6,10 @@
       "hash": "274ee04ddb36fc57068616ddd758afd6389fddcdde721131391a5236967a29dd"
     },
     {
+      "name": "auto-heal",
+      "hash": "1a1108e340bf94c7d568f27245183245fce793e3527383159c33f951adbbd00e"
+    },
+    {
       "name": "config-diff",
       "hash": "1e4bbca5944385aa5ffb1061b1b529c18cb22b16ea264ff0ec32f921ee2593c2"
     },

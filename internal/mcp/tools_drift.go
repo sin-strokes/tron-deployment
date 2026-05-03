@@ -12,7 +12,6 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/paths"
 	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/state"
-	"github.com/tronprotocol/tron-deployment/internal/target"
 )
 
 // registerDriftTools wires the verify_config tool — the MCP-side
@@ -92,25 +91,6 @@ func verifyConfigTool(ctx context.Context, _ *mcp.CallToolRequest, args verifyCo
 		"diff_count":    len(diffs),
 		"diffs":         diffs,
 	})
-}
-
-// readLiveConfigForMCP duplicates cmd/verify_config.go's readLiveConfig
-// to avoid the cmd → internal/mcp import edge. Not a public type so
-// keeping it in the mcp package is fine.
-func readLiveConfigForMCP(ctx context.Context, tgt target.Target, node *state.ManagedNode) (string, error) {
-	if node.Runtime == "jar" {
-		out, err := tgt.Exec(ctx, "cat", node.InstallPath+"/conf/"+node.Name+".conf")
-		if err != nil {
-			return "", fmt.Errorf("read jar conf: %w", err)
-		}
-		return string(out), nil
-	}
-	out, err := tgt.Exec(ctx, "docker", "exec", node.Name, "cat",
-		"/java-tron/conf/"+node.Name+".conf")
-	if err != nil {
-		return "", fmt.Errorf("docker exec cat: %w", err)
-	}
-	return string(out), nil
 }
 
 // mcpLineDiff mirrors cmd.lineDiff. Same simplicity rationale.

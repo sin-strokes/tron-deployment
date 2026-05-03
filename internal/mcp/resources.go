@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -16,46 +17,57 @@ import (
 // Resources are conceptually different from tools: tools are
 // "actions" (verb), resources are "data" (noun). MCP-aware clients
 // like Claude Desktop surface resources in a file-system-like UI
-// the user can attach to a conversation, while tools are invoked by
-// the LLM during reasoning.
+// the user can attach to a conversation.
 //
-// What we expose:
+// Static resources (one fixed URI):
 //
-//   - trond://state         — current state.json (every managed node + targets)
-//   - trond://audit-log     — last 200 lines of audit.log (JSONL)
-//   - trond://schema-manifest — entire schema manifest the schema command emits
+//   - trond://state             — full state.json (every managed node)
+//   - trond://audit-log         — last 200 audit log entries
+//   - trond://schema-manifest   — every embedded output schema + version
 //
-// Why these three: they're read often, change rarely within a
-// conversation, and have stable URIs that survive multiple tool
-// calls (so an LLM can re-attach the same resource without an
-// extra round-trip).
+// Dynamic resource templates (URI variables):
 //
-// Resources that *would* be useful but aren't here yet:
-//   - trond://nodes/<name>/endpoints — needs ResourceTemplate (URI template)
-//   - trond://intent/<name>          — same
+//   - trond://nodes/{name}/endpoints  — one node's endpoints + ports
+//   - trond://nodes/{name}/conf       — one node's live HOCON conf
 //
-// The dynamic per-node URIs are TODO; the static ones are MVP.
+// Templates let agents attach a single node's data without dragging
+// in unrelated nodes — important when state has 10s of managed
+// nodes and the agent is only reasoning about one.
 func registerResources(s *mcp.Server) {
 	s.AddResource(&mcp.Resource{
 		URI:         "trond://state",
 		Name:        "state.json",
-		Description: "The state.json file at $TROND_STATE_DIR (or ~/.trond). One row per managed node — name, version, target, runtime, ports. The agent can attach this to a conversation to reason about the deployed estate without per-node tool calls.",
+		Description: "The state.json file at $TROND_STATE_DIR (or ~/.trond). One row per managed node — name, version, target, runtime, ports.",
 		MIMEType:    "application/json",
 	}, readStateResource)
 
 	s.AddResource(&mcp.Resource{
 		URI:         "trond://audit-log",
 		Name:        "audit.log (recent)",
-		Description: "Up to the last 200 entries of audit.log (JSONL). Use this to answer questions like 'what did we do to this node yesterday' without invoking the events tool.",
+		Description: "Up to the last 200 entries of audit.log (JSONL). Use to answer 'what did we do to this node yesterday' without invoking the events tool.",
 		MIMEType:    "application/x-ndjson",
 	}, readAuditLogResource)
 
 	s.AddResource(&mcp.Resource{
 		URI:         "trond://schema-manifest",
 		Name:        "schema manifest",
-		Description: "The full output of `trond schema -o json` — schema_version, every command, every flag, every output schema. Use this resource as the agent's authoritative reference for the trond CLI surface.",
+		Description: "SchemaVersion + every embedded output schema. Authoritative reference for the trond CLI surface.",
 		MIMEType:    "application/json",
 	}, readSchemaManifestResource)
+
+	s.AddResourceTemplate(&mcp.ResourceTemplate{
+		URITemplate: "trond://nodes/{name}/endpoints",
+		Name:        "node endpoints",
+		Description: "Endpoints (http / grpc / labels / target) for a single managed node. Smaller than trond://state when an agent only reasons about one node.",
+		MIMEType:    "application/json",
+	}, readNodeEndpointsResource)
+
+	s.AddResourceTemplate(&mcp.ResourceTemplate{
+		URITemplate: "trond://nodes/{name}/conf",
+		Name:        "node live HOCON conf",
+		Description: "The .conf file currently in use by the node's running container (docker exec cat). Read-only.",
+		MIMEType:    "text/plain",
+	}, readNodeConfResource)
 }
 
 func readStateResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
@@ -86,8 +98,6 @@ func readAuditLogResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp
 	body, err := os.ReadFile(paths.AuditLog())
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No log yet — empty resource is more useful than an
-			// error; agents reason fine over zero entries.
 			return &mcp.ReadResourceResult{
 				Contents: []*mcp.ResourceContents{{
 					URI:      req.Params.URI,
@@ -108,12 +118,6 @@ func readAuditLogResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp
 }
 
 func readSchemaManifestResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-	// We can't import internal/schema's manifest builder here without
-	// a circular dependency (cmd/schema.go owns the cobra-tree walk).
-	// Instead we point at the embedded SchemaVersion + the full set
-	// of output schemas — the union of which is the manifest's
-	// load-bearing content. Agents that want the full manifest can
-	// shell out to `trond schema -o json`.
 	body, err := schemaManifestJSON()
 	if err != nil {
 		return nil, err
@@ -127,15 +131,107 @@ func readSchemaManifestResource(_ context.Context, req *mcp.ReadResourceRequest)
 	}, nil
 }
 
+func readNodeEndpointsResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	name, err := nodeNameFromURI(req.Params.URI, "/endpoints")
+	if err != nil {
+		return nil, err
+	}
+	node, err := loadNodeByName(name)
+	if err != nil {
+		return nil, err
+	}
+	endpoints := map[string]any{
+		"name":    node.Name,
+		"runtime": node.Runtime,
+		"target":  node.Target,
+		"endpoints": map[string]string{
+			"http": fmt.Sprintf("http://127.0.0.1:%d", node.HTTPPort),
+			"grpc": fmt.Sprintf("127.0.0.1:%d", node.GRPCPort),
+		},
+		"version": node.Version,
+		"labels":  node.Labels,
+	}
+	body, err := json.MarshalIndent(endpoints, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.ReadResourceResult{
+		Contents: []*mcp.ResourceContents{{
+			URI:      req.Params.URI,
+			MIMEType: "application/json",
+			Text:     string(body),
+		}},
+	}, nil
+}
+
+func readNodeConfResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	name, err := nodeNameFromURI(req.Params.URI, "/conf")
+	if err != nil {
+		return nil, err
+	}
+	node, err := loadNodeByName(name)
+	if err != nil {
+		return nil, err
+	}
+	tgt, err := mcpResolveTargetFromNode(node)
+	if err != nil {
+		return nil, err
+	}
+	if c, ok := any(tgt).(interface{ Close() error }); ok {
+		defer c.Close()
+	}
+	live, err := readLiveConfigForMCP(ctx, tgt, node)
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.ReadResourceResult{
+		Contents: []*mcp.ResourceContents{{
+			URI:      req.Params.URI,
+			MIMEType: "text/plain",
+			Text:     live,
+		}},
+	}, nil
+}
+
+// nodeNameFromURI extracts <name> from URIs of the form
+// trond://nodes/<name><suffix>. Returns a clean error when the URI
+// doesn't fit the expected shape — agents see it as a normal MCP
+// error rather than a panic.
+func nodeNameFromURI(uri, suffix string) (string, error) {
+	const prefix = "trond://nodes/"
+	if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
+		return "", fmt.Errorf("URI %q does not match trond://nodes/<name>%s", uri, suffix)
+	}
+	mid := strings.TrimSuffix(strings.TrimPrefix(uri, prefix), suffix)
+	if mid == "" || strings.ContainsAny(mid, "/?#") {
+		return "", fmt.Errorf("URI %q has empty or malformed <name> segment", uri)
+	}
+	return mid, nil
+}
+
+func loadNodeByName(name string) (*state.ManagedNode, error) {
+	store, err := state.NewStore(paths.State())
+	if err != nil {
+		return nil, fmt.Errorf("open state: %w", err)
+	}
+	st, err := store.Load()
+	if err != nil {
+		return nil, fmt.Errorf("read state: %w", err)
+	}
+	node := store.GetNode(st, name)
+	if node == nil {
+		return nil, fmt.Errorf("no managed node named %q", name)
+	}
+	return node, nil
+}
+
 // tailLines returns at most n lines from the end of s, newline-
-// preserved. Used to bound the audit-log resource size — a
-// long-running operator's log can be megabytes.
+// preserved. Bounded so a long-running operator's audit.log doesn't
+// blow out the agent's context window.
 func tailLines(s string, n int) string {
 	if s == "" {
 		return ""
 	}
-	// Walk backward counting newlines; take everything from the
-	// (n+1)-th newline from the end onwards.
 	count := 0
 	for i := len(s) - 1; i >= 0; i-- {
 		if s[i] == '\n' {

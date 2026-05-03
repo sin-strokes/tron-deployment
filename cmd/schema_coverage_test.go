@@ -72,6 +72,7 @@ func TestSchemaCoverage(t *testing.T) {
 	// lookup used by `trond schema`. Keep in sync with cmd/schema.go.
 	lookup := map[string]string{
 		"trond apply":             "apply",
+		"trond auto-heal":         "auto-heal",
 		"trond config validate":   "config-validate",
 		"trond config render":     "config-render",
 		"trond config diff":       "config-diff",
