@@ -54,6 +54,7 @@ func TestE2E_SchemaConformance(t *testing.T) {
 		{schema: "preflight", args: []string{"preflight", "--intent", intentPath}},
 		{schema: "config-validate", args: []string{"config", "validate", intentPath}},
 		{schema: "config-render", args: []string{"config", "render", intentPath}},
+		{schema: "config-diff", args: []string{"config", "diff", intentPath}},
 		{schema: "plan", args: []string{"plan", "--intent", intentPath}},
 		{schema: "recipe-list", args: []string{"recipe", "list"}},
 		{schema: "recipe-show", args: []string{"recipe", "show", "nile-test-fullnode"}},

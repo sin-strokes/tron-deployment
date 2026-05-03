@@ -41,7 +41,7 @@ endif
 
 GOFLAGS    ?=
 
-.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates sync-schemas docs man cover vuln bootstrap-go
+.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates sync-schemas snapshot-schema-baseline docs man cover vuln bootstrap-go
 
 ## bootstrap-go: Download + verify the project-local Go toolchain
 ##               (idempotent; safe to re-run; no-op if already current)
@@ -145,3 +145,13 @@ sync-schemas:
 	@echo "syncing schemas/output/ → internal/schema/files/"
 	@cp schemas/output/*.schema.json internal/schema/files/
 	@echo "done. Re-run 'make test' to confirm."
+
+## snapshot-schema-baseline: Refresh internal/schema/version_baseline.json
+##                           after intentional schema changes. The test
+##                           TestSchemaVersionShape compares the current
+##                           embedded schemas against this baseline; run
+##                           this target as the second step of any
+##                           schema edit (the first being SchemaVersion).
+snapshot-schema-baseline: $(GO_BOOTSTRAP)
+	TROND_SCHEMA_UPDATE_BASELINE=1 $(GO) test -run TestSchemaVersionShape ./internal/schema/
+	@echo "baseline refreshed. Commit version_baseline.json with the SchemaVersion bump."

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/config-diff.schema.json",
+  "title": "trond config diff output",
+  "description": "Returned by `trond config diff --intent <path> -o json`. Compares the rendered HOCON for the intent against the deployed copy on disk. Three top-level shapes are possible — disambiguate via the `status` field.",
+  "type": "object",
+  "required": ["name"],
+  "oneOf": [
+    {
+      "title": "Not yet deployed",
+      "description": "Returned when there is no managed node by that name; the entire intent would be new.",
+      "required": ["name", "status"],
+      "properties": {
+        "name":    { "type": "string" },
+        "status":  { "type": "string", "const": "new" },
+        "message": { "type": "string" }
+      }
+    },
+    {
+      "title": "Deployed config not readable",
+      "description": "Returned when the node is managed but the deployed .conf file can't be read (e.g. ~/.trond/deployments was wiped); diff cannot be computed.",
+      "required": ["name", "status"],
+      "properties": {
+        "name":    { "type": "string" },
+        "status":  { "type": "string", "const": "unknown" },
+        "message": { "type": "string" }
+      }
+    },
+    {
+      "title": "Diffable",
+      "description": "Returned when both versions exist; carries a line-level diff array with classic `+ ` / `- ` prefixes.",
+      "required": ["name", "has_changes", "diff_count", "diffs"],
+      "properties": {
+        "name":        { "type": "string" },
+        "has_changes": { "type": "boolean", "description": "True when diffs is non-empty." },
+        "diff_count":  { "type": "integer", "minimum": 0 },
+        "diffs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "One diff line; `+ ` prefix = added, `- ` prefix = removed.",
+            "examples": ["+ node.maxConnections = 80", "- node.maxConnections = 30"]
+          }
+        }
+      }
+    }
+  ]
+}

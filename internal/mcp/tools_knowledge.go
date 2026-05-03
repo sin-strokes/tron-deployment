@@ -20,14 +20,14 @@ func registerKnowledgeTools(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "knowledge_list",
 		Title:       "List embedded knowledge topics",
-		Description: "Return the names of every embedded knowledge topic. Topics include node-types, troubleshooting, best-practices, config-reference, cloud-deployment, test-harness, snapshots, release-signatures, and more.",
+		Description: "Return the names of every embedded knowledge topic. Topics include node-types, troubleshooting, best-practices, config-reference, cloud-deployment, test-harness, snapshots, release-signatures, and more. Equivalent to `trond knowledge -o json`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}, knowledgeListTool)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "knowledge_get",
 		Title:       "Read one knowledge topic",
-		Description: "Return the full markdown contents of one knowledge topic. Prefer this over paraphrasing from training data when the user's question maps to a topic.",
+		Description: "Return the full markdown contents of one knowledge topic. Prefer this over paraphrasing from training data when the user's question maps to a topic. Equivalent to `trond knowledge <topic>`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}, knowledgeGetTool)
 }
@@ -39,7 +39,12 @@ func knowledgeListTool(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs)
 func knowledgeGetTool(ctx context.Context, _ *mcp.CallToolRequest, args knowledgeTopicArg) (*mcp.CallToolResult, any, error) {
 	body, err := knowledge.Get(args.Topic)
 	if err != nil {
-		return errResult(err)
+		// knowledge.Get returns a generic error — wrap with the
+		// canonical not-found code + an actionable suggestion to
+		// list available topics, so agents have a clear next step.
+		return errResult(notFoundWithSuggestions(
+			"knowledge topic", args.Topic,
+			"Call the 'knowledge_list' tool to see available topics"))
 	}
 	// Markdown body verbatim — we surface as text content rather than
 	// JSON so the client can render markdown correctly.
