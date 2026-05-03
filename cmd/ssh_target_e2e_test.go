@@ -27,13 +27,24 @@ func pickFreePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-func probeTCPSSH(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+// probeSSHBanner returns true when the server at port:127.0.0.1
+// presents an SSH banner ("SSH-2.0-..."). This is a stronger
+// readiness signal than probeTCPSSH alone; many SSH server images
+// (linuxserver's included) accept TCP connections before sshd
+// finishes generating host keys.
+func probeSSHBanner(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
-	return true
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 16)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return false
+	}
+	return n >= 4 && string(buf[:4]) == "SSH-"
 }
 
 // TestE2E_SSHTarget_BasicLifecycle exercises the SSH target code
@@ -182,19 +193,25 @@ func startSSHFixture(t *testing.T) *sshFixture {
 	}
 	t.Cleanup(cleanup)
 
-	// 4. Wait for SSH to accept connections. linuxserver's image
-	//    prints the auto-generated host keys to its log; once we see
-	//    "Server listening" or can TCP-connect, we proceed. We poll
-	//    every 250ms for up to 30s.
-	deadline := time.Now().Add(30 * time.Second)
+	// 4. Wait for the SSH daemon to be fully ready. TCP-port-open is
+	//    not enough — linuxserver's image accepts TCP connections
+	//    before sshd has finished generating host keys / loading the
+	//    PUBLIC_KEY. We probe by reading the SSH banner: a real sshd
+	//    sends "SSH-2.0-..." within a few hundred ms of accept. Until
+	//    we see that, the server is still booting.
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		if probeTCPSSH(port) {
+		if probeSSHBanner(port) {
 			break
 		}
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
-	if !probeTCPSSH(port) {
-		t.Fatal("ssh fixture did not start listening within 30s")
+	if !probeSSHBanner(port) {
+		// Drop a tail of the container log into the test output
+		// before failing — makes the "why didn't sshd come up" case
+		// easier to diagnose remotely.
+		logs, _ := exec.Command("docker", "logs", "--tail", "60", containerID).CombinedOutput()
+		t.Fatalf("ssh fixture did not present an SSH banner within 60s\ncontainer log:\n%s", logs)
 	}
 
 	return &sshFixture{

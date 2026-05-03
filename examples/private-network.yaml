@@ -21,6 +21,7 @@ nodes:
       http: 8090
       grpc: 50051
       p2p: 18888
+      metrics: 9527
 
   - type: fullnode
     version: latest
@@ -34,3 +35,6 @@ nodes:
       grpc: 50052
       jsonrpc: 8545
       p2p: 18889
+      # Distinct metrics port — both nodes default to 9527 if
+      # unset, which collides at docker port-bind time.
+      metrics: 9528

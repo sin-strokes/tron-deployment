@@ -41,7 +41,12 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --snapshot --clean --skip=publish,sign
+          # Skip docker too — building images in a snapshot smoke is
+          # noisy (depends on the binary layout produced by goreleaser
+          # itself, which can drift between versions) and doesn't add
+          # signal beyond the artifact-exists checks below. Docker
+          # builds run in the real release pipeline.
+          args: release --snapshot --clean --skip=publish,sign,docker
 
       - name: Inspect dist/
         run: |
