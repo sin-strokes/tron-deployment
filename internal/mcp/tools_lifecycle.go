@@ -44,7 +44,7 @@ func registerLifecycleTools(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "apply",
 		Title:       "Deploy or update a node",
-		Description: `Idempotent in-process deploy via internal/apply.Apply (the same pure function the CLI uses). Re-running with the same intent is a no-op (returns outcome="no_change"). With auto_approve=false (default), changes to an already-deployed node return error_code=HUMAN_REQUIRED — the agent must surface the diff (call 'plan' first), get user approval, then re-call 'apply' with auto_approve=true. With wait=true, blocks until the node's HTTP API responds 2xx or wait_timeout elapses (default 5m); a wait failure leaves the deploy successful but reports ready=false in the result.`,
+		Description: `Idempotent in-process deploy via internal/apply.Apply (the same pure function the CLI uses). Re-running with the same intent is a no-op (returns outcome="no_change"). With auto_approve=false (default), changes to an already-deployed node return error_code=HUMAN_REQUIRED — the agent must surface the diff (call 'plan' first), get user approval, then re-call 'apply' with auto_approve=true. With wait=true, blocks until the node's HTTP API responds 2xx or wait_timeout elapses (default 5m); a wait failure leaves the deploy successful but reports ready=false in the result. Equivalent to ` + "`trond apply --intent <path> --auto-approve -o json`" + `.`,
 		Annotations: &mcp.ToolAnnotations{
 			DestructiveHint: ptrTrue(),
 			IdempotentHint:  true,

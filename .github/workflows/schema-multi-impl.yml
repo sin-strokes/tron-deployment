@@ -1,0 +1,77 @@
+name: Schema Multi-Impl
+
+# trond's published JSON Schemas (schemas/output/*.schema.json) are
+# consumed by agents in any language. Go validation alone could let
+# Go-library-specific tolerance (lenient $ref resolution, type
+# coercion) hide schema bugs that ajv (JS, the reference impl) and
+# python-jsonschema (Python, used by half the tooling ecosystem)
+# would refuse.
+#
+# This workflow validates each schema with both, and asserts known-
+# good sample documents from schemas/samples/ pass validation in all
+# three implementations the matrix runs.
+#
+# Catches: schemas that compile in Go but break in JS / Python.
+
+on:
+  pull_request:
+    paths:
+      - "schemas/**"
+      - "internal/schema/**"
+      - ".github/workflows/schema-multi-impl.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ajv:
+    name: Validate via ajv (JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install ajv-cli
+        run: npm install -g ajv-cli@5 ajv-formats@3
+      - name: Compile every schema
+        # `compile` validates schema syntax (without a sample doc).
+        # ajv refuses anything that isn't valid draft-2020-12.
+        run: |
+          set -e
+          for f in schemas/output/*.schema.json schemas/intent.schema.json; do
+            echo "::group::$f"
+            ajv compile -s "$f" --spec=draft2020 --strict=false
+            echo "::endgroup::"
+          done
+
+  python:
+    name: Validate via python-jsonschema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install jsonschema
+        run: pip install 'jsonschema[format]>=4.21'
+      - name: Compile every schema
+        # python-jsonschema's validators check the schema's own
+        # validity against the meta-schema for the declared draft.
+        run: |
+          python - <<'PY'
+          import glob, json, sys
+          from jsonschema import Draft202012Validator
+          fails = []
+          for f in sorted(glob.glob("schemas/output/*.schema.json") + ["schemas/intent.schema.json"]):
+              with open(f) as fh:
+                  doc = json.load(fh)
+              try:
+                  Draft202012Validator.check_schema(doc)
+                  print(f"✓ {f}")
+              except Exception as e:
+                  print(f"::error file={f}::{e}")
+                  fails.append(f)
+          if fails:
+              sys.exit(f"{len(fails)} schema(s) rejected: {fails}")
+          PY

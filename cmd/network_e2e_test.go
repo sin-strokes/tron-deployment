@@ -62,11 +62,24 @@ func TestE2E_Network_PrivateLifecycle(t *testing.T) {
 	// Status — every -node entry should belong to private-dev. We don't
 	// assert on `status` per node (a freshly-started witness can
 	// briefly be in "starting") — only that the count is right.
-	out = runTrondCtx(ctx, t, env, "network", "status", "--output", "json")
+	//
+	// On resource-constrained CI runners (GitHub free) the second node
+	// occasionally takes a few seconds to surface in state.json after
+	// `network create` returned. Retry briefly before giving up.
 	var statusList []map[string]any
-	mustUnmarshalJSON(t, out, &statusList)
+	statusDeadline := time.Now().Add(15 * time.Second)
+	for {
+		out = runTrondCtx(ctx, t, env, "network", "status", "--output", "json")
+		statusList = nil
+		mustUnmarshalJSON(t, out, &statusList)
+		if len(statusList) == 2 || time.Now().After(statusDeadline) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	if len(statusList) != 2 {
-		t.Fatalf("status: expected 2 nodes, got %d: %s", len(statusList), out)
+		t.Fatalf("status: expected 2 nodes after 15s of retry, got %d: %s",
+			len(statusList), out)
 	}
 
 	// Destroy

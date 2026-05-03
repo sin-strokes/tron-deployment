@@ -31,21 +31,21 @@ func registerDiagnosticTools(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "version",
 		Title:       "trond version + build info",
-		Description: "Trond version, commit, build time, Go runtime, platform.",
+		Description: "Trond version, commit, build time, Go runtime, platform. Equivalent to `trond version -o json`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}, versionTool)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "health",
 		Title:       "Quick HTTP probe of a node",
-		Description: "Single-shot HTTP probe of a node's getnowblock API. Returns block_height + latency. Lighter than `diagnose`. Only works for running nodes.",
+		Description: "Single-shot HTTP probe of a node's getnowblock API. Returns block_height + latency. Lighter than `diagnose`. Only works for running nodes. Equivalent to `trond health <name> -o json`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}, healthTool)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "diagnose",
 		Title:       "Structured health checks",
-		Description: "Run trond's diagnostic suite against a node: sync_progress, peer_count, disk_space, port_listening, etc. Each check carries its own status (pass/warning/fail) and suggestions[]. Process failed checks first.",
+		Description: "Run trond's diagnostic suite against a node: sync_progress, peer_count, disk_space, port_listening, etc. Each check carries its own status (pass/warning/fail) and suggestions[]. Process failed checks first. Equivalent to `trond diagnose <name> -o json`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}, diagnoseTool)
 }

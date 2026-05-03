@@ -19,6 +19,16 @@ func notFound(operation, name string) *output.StructuredError {
 		)
 }
 
+// notFoundWithSuggestions is a generic NOT_FOUND envelope for resources
+// other than managed nodes (e.g. knowledge topics, snapshot sources).
+// Agents handle the same NOT_FOUND code so this gives them a uniform
+// recovery hook regardless of resource type.
+func notFoundWithSuggestions(resource, name string, suggestions ...string) *output.StructuredError {
+	return output.NewError("NOT_FOUND", output.ExitGeneralError,
+		fmt.Sprintf("%s %q not found", resource, name)).
+		WithSuggestions(suggestions...)
+}
+
 // httpURL formats a port into the http://127.0.0.1:<p> URL we surface
 // to agents. Agents can re-use this in their own follow-up probes
 // (e.g. `wait --http <url>`).

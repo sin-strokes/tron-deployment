@@ -1,0 +1,105 @@
+{
+  "schema_version": "1.1.0",
+  "entries": [
+    {
+      "name": "apply",
+      "hash": "274ee04ddb36fc57068616ddd758afd6389fddcdde721131391a5236967a29dd"
+    },
+    {
+      "name": "config-diff",
+      "hash": "1e4bbca5944385aa5ffb1061b1b529c18cb22b16ea264ff0ec32f921ee2593c2"
+    },
+    {
+      "name": "config-render",
+      "hash": "9a845732c24c2be1b0fa4f7945a530f8abf16dce8202d18f8940ee1e33f73e45"
+    },
+    {
+      "name": "config-validate",
+      "hash": "0a420779dffb8a08edb4261efb6311e8575621b460caae251050bcdd8c2a9704"
+    },
+    {
+      "name": "diagnose",
+      "hash": "ceacd245c0c301a7fa74144da6b3f2ee98637b6fd440680831ca2ea907f7cd42"
+    },
+    {
+      "name": "doctor",
+      "hash": "18d4d972237b62d66440dfecf65312e794f7df0160509eae832f26a30109dd5c"
+    },
+    {
+      "name": "error",
+      "hash": "64d75337eb0c375f14ba1ccbe51519be1ca8a5b02b6b053fc13934f72a227e36"
+    },
+    {
+      "name": "events",
+      "hash": "abcf44d4bf3e785f04058aa4ff1012f02982692ff6083b03d3d499aea45a97a2"
+    },
+    {
+      "name": "health",
+      "hash": "5b08c5170a2cc4a4d21bc5a1d0926140996ee9f7e3600013647bcc57270e272b"
+    },
+    {
+      "name": "inspect",
+      "hash": "b2ff5ff94b3232ca0ac697566ba81aa283fb242783485aa76a576802dd04e208"
+    },
+    {
+      "name": "list",
+      "hash": "180fd09cefb57c2c511e3b6157ed2cf2238307836ed03dc529b395f725230764"
+    },
+    {
+      "name": "network-create",
+      "hash": "281e3566457fa5a5c27f4bf19f52864bd41f870b4cca6f5220ffe6c665a10e82"
+    },
+    {
+      "name": "network-status",
+      "hash": "dc86035eef9e345d319530c5e8a6726aae0d4fc9f06fef36aab805dd0af72eb5"
+    },
+    {
+      "name": "plan",
+      "hash": "d6857b5b219d39ad4fc2a29049f3da9fa4289147720412892579451b0436c0a4"
+    },
+    {
+      "name": "preflight",
+      "hash": "783cecba29130c0c9b5e0f7f2fb5a3ab578c421b5c3ae1a8e0a831eb6ef3d116"
+    },
+    {
+      "name": "recipe-list",
+      "hash": "df5d1927f10273208c467fb43e262160d40ee3a28088f1cd8cde63baad99937c"
+    },
+    {
+      "name": "recipe-run",
+      "hash": "8224043f170ccc4fb4afe998a3b6bf19e051a1e1eaba3e6d3b70a93a3b48f535"
+    },
+    {
+      "name": "recipe-show",
+      "hash": "488d34dc919a5aa0f482656c34aa43c15b92c6acf5bd7105ebbe06877b303084"
+    },
+    {
+      "name": "snapshot-download",
+      "hash": "c816d916847fa337372928fb98c0dcc03905bbfb6a5dd1b76a42d7c9703412fd"
+    },
+    {
+      "name": "snapshot-jobs",
+      "hash": "6f2ad9d2080102737b3ab81c3dcb6064f4d87d505680a96254ba3c5c76f983ff"
+    },
+    {
+      "name": "snapshot-list",
+      "hash": "8751b65d3eb3d9ce30eb142c5c1e9772efbb30f1ff95eff104cab2a4a2ecfa7a"
+    },
+    {
+      "name": "snapshot-sources",
+      "hash": "b1456ccd9b21ac99547f9735890ac79ba57295801af5b03f5e351dd5ff310503"
+    },
+    {
+      "name": "status",
+      "hash": "0c8d3bf948714d420a1c939438746d58658f80136523c290dc2d7e28861ead4b"
+    },
+    {
+      "name": "verify",
+      "hash": "1d83dffdd94f5d1d59806da8469cb042e5af3b021d1d9e67b5f6295975fa08f9"
+    },
+    {
+      "name": "version",
+      "hash": "463fe0ab7863c7f07e10fce7bee644af9d084703cc1046c285e26a548f29f8c7"
+    }
+  ]
+}

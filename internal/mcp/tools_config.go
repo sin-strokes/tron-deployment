@@ -6,6 +6,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
+	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/render"
 )
 
@@ -41,7 +42,13 @@ func registerConfigTools(s *mcp.Server) {
 func validateTool(ctx context.Context, _ *mcp.CallToolRequest, args intentPathArg) (*mcp.CallToolResult, any, error) {
 	parsed, err := intent.Load(args.Path)
 	if err != nil {
-		return errResult(err)
+		// Wrap with VALIDATION_ERROR + suggestions so an agent has a
+		// clear next step rather than the bare loader error.
+		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError, err.Error()).
+			WithSuggestions(
+				"Confirm the path is absolute and the intent.yaml exists",
+				"See examples/ in the trond repo for valid intent.yaml templates",
+			))
 	}
 	return jsonResult(map[string]any{
 		"valid":      true,

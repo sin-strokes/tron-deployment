@@ -44,14 +44,14 @@ func registerSnapshotTools(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "snapshot_list",
 		Title:       "List available backups for a source",
-		Description: "Returns the backup names available at a given mirror, newest-first. Mainnet sources are scraped from the Apache index; nile uses date generation.",
+		Description: "Returns the backup names available at a given mirror, newest-first. Mainnet sources are scraped from the Apache index; nile uses date generation. Equivalent to `trond snapshot list --network <net> -o json`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}, snapshotListTool)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "snapshot_jobs",
 		Title:       "List background download jobs",
-		Description: "Inventory of detached snapshot downloads (started with snapshot_download + detach=true). Each row carries id, pid, running, last_log_line.",
+		Description: "Inventory of detached snapshot downloads (started with snapshot_download + detach=true). Each row carries id, pid, running, last_log_line. Equivalent to `trond snapshot jobs -o json`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 	}, snapshotJobsTool)
 
@@ -60,7 +60,9 @@ func registerSnapshotTools(s *mcp.Server) {
 		Title: "Download a chain DB snapshot",
 		Description: `Stream a snapshot tarball into a destination directory, gunzip + tar in one pipeline (no .tgz on disk). Pre-checks free disk space (HEAD probe + Statfs, requires 2× headroom). Refuses overwrite of an existing chain DB unless force=true. Preserves any pre-existing userdata/. MD5-verifies inline against the published sidecar when present.
 
-Use dry_run=true to inspect the plan first. The tool emits MCP progress notifications during the actual download so the client can render a live progress bar. NOTE: this MCP tool runs the download in-process and blocks until completion or context cancellation; for fire-and-forget mainnet-full sized downloads (multi-hour) prefer the CLI with --detach.`,
+Use dry_run=true to inspect the plan first. The tool emits MCP progress notifications during the actual download so the client can render a live progress bar. NOTE: this MCP tool runs the download in-process and blocks until completion or context cancellation; for fire-and-forget mainnet-full sized downloads (multi-hour) prefer the CLI with --detach.
+
+Equivalent to ` + "`trond snapshot download --network <net> --to <dest> -o json`" + `.`,
 		Annotations: &mcp.ToolAnnotations{
 			DestructiveHint: ptrTrue(),
 		},
