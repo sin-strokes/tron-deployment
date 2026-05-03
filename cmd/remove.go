@@ -30,17 +30,16 @@ func init() {
 
 func runRemove(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	outputFmt, _ := cmd.Flags().GetString("output")
 
 	// Require confirmation
 	if removeConfirm != name {
-		return exitWithError(outputFmt, "HUMAN_REQUIRED", output.ExitHumanRequired,
+		return exitWithError("HUMAN_REQUIRED", output.ExitHumanRequired,
 			fmt.Sprintf("Destructive operation: removing node %q", name),
 			fmt.Sprintf("Confirm with: trond remove %s --confirm %s", name, name))
 	}
 
 	start := time.Now()
-	nc, err := resolveNodeContext(name, outputFmt)
+	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err
 	}
@@ -49,7 +48,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	purge := !removeKeepData
 	if err := nc.Runtime.Remove(cmd.Context(), name, purge); err != nil {
 		writeAudit(auditEvent{Command: "remove", Node: name, Target: nc.Target.String(), Result: "error", ErrorCode: "REMOVE_ERROR", Start: start})
-		return exitWithError(outputFmt, "REMOVE_ERROR", output.ExitGeneralError,
+		return exitWithError("REMOVE_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Failed to remove %s: %v", name, err))
 	}
 
@@ -57,7 +56,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	nc.Store.Save(nc.State)
 	writeAudit(auditEvent{Command: "remove", Node: name, Target: nc.Target.String(), Result: "success", Start: start})
 
-	writeResult(outputFmt, map[string]any{
+	writeResult(map[string]any{
 		"name":      name,
 		"status":    "removed",
 		"keep_data": removeKeepData,

@@ -56,7 +56,7 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	// 1. Load + validate
 	parsed, err := intent.Load(planIntentPath)
 	if err != nil {
-		return exitWithError(outputFmt, "VALIDATION_ERROR", output.ExitValidationError, err.Error())
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
 
 	// 2. Compute intent hash
@@ -66,12 +66,12 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	// 3. Load current state
 	store, err := state.NewStore(statePath())
 	if err != nil {
-		return exitWithError(outputFmt, "STATE_ERROR", output.ExitGeneralError, err.Error())
+		return exitWithError("STATE_ERROR", output.ExitGeneralError, err.Error())
 	}
 
 	deployState, err := store.Load()
 	if err != nil {
-		return exitWithError(outputFmt, "STATE_ERROR", output.ExitGeneralError, err.Error())
+		return exitWithError("STATE_ERROR", output.ExitGeneralError, err.Error())
 	}
 
 	existing := store.GetNode(deployState, parsed.Name)
@@ -82,7 +82,7 @@ func runPlan(cmd *cobra.Command, args []string) error {
 
 	hoconConfig, err := render.RenderHOCON(templateDir, parsed, node)
 	if err != nil {
-		return exitWithError(outputFmt, "RENDER_ERROR", output.ExitGeneralError, err.Error())
+		return exitWithError("RENDER_ERROR", output.ExitGeneralError, err.Error())
 	}
 	configHash := apply.IntentHashFromBytes([]byte(hoconConfig))
 

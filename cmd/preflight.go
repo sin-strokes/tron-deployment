@@ -41,12 +41,12 @@ func runPreflight(cmd *cobra.Command, args []string) error {
 
 	parsed, err := intent.Load(preflightIntentPath)
 	if err != nil {
-		return exitWithError(outputFmt, "VALIDATION_ERROR", output.ExitValidationError, err.Error())
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
 
 	tgt, err := resolveTarget(parsed)
 	if err != nil {
-		return exitWithError(outputFmt, "TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error(),
+		return exitWithError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error(),
 			"Check SSH connectivity or Docker availability")
 	}
 	if closer, ok := tgt.(interface{ Close() error }); ok {

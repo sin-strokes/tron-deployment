@@ -44,7 +44,7 @@ func runKnowledge(cmd *cobra.Command, args []string) error {
 	topic := args[0]
 	content, err := knowledge.Get(topic)
 	if err != nil {
-		return exitWithError(outputFmt, "KNOWLEDGE_ERROR", output.ExitGeneralError, err.Error(),
+		return exitWithError("KNOWLEDGE_ERROR", output.ExitGeneralError, err.Error(),
 			"List topics with: trond knowledge",
 			"Available: "+strings.Join(knowledge.Topics(), ", "))
 	}

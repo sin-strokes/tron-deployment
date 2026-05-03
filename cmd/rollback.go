@@ -23,17 +23,16 @@ func init() {
 
 func runRollback(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	outputFmt, _ := cmd.Flags().GetString("output")
 	start := time.Now()
 
-	nc, err := resolveNodeContext(name, outputFmt)
+	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err
 	}
 	defer nc.Close()
 
 	if nc.Node.PreviousVersion == "" {
-		return exitWithError(outputFmt, "ROLLBACK_ERROR", output.ExitGeneralError,
+		return exitWithError("ROLLBACK_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("No previous version recorded for %s", name),
 			"Rollback is only available after an upgrade")
 	}
@@ -56,7 +55,7 @@ func runRollback(cmd *cobra.Command, args []string) error {
 	// Start
 	if err := nc.Runtime.Start(cmd.Context(), name); err != nil {
 		writeAudit(auditEvent{Command: "rollback", Node: name, Target: nc.Target.String(), Result: "error", ErrorCode: "ROLLBACK_ERROR", Start: start})
-		return exitWithError(outputFmt, "ROLLBACK_ERROR", output.ExitGeneralError,
+		return exitWithError("ROLLBACK_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Rollback to %s failed: %v", targetVersion, err))
 	}
 
@@ -64,7 +63,7 @@ func runRollback(cmd *cobra.Command, args []string) error {
 	nc.SaveState()
 	writeAudit(auditEvent{Command: "rollback", Node: name, Target: nc.Target.String(), Result: "success", Start: start})
 
-	writeResult(outputFmt, map[string]any{
+	writeResult(map[string]any{
 		"name":             name,
 		"status":           "running",
 		"version":          targetVersion,

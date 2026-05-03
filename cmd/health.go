@@ -23,9 +23,8 @@ func init() {
 
 func runHealth(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	outputFmt, _ := cmd.Flags().GetString("output")
 
-	nc, err := resolveNodeContext(name, outputFmt)
+	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err
 	}
@@ -47,7 +46,7 @@ func runHealth(cmd *cobra.Command, args []string) error {
 			"health": "unhealthy",
 			"error":  "Cannot reach HTTP API",
 		}
-		writeResult(outputFmt, result)
+		writeResult(result)
 		return output.NewError("UNHEALTHY", output.ExitGeneralError, "Cannot reach HTTP API")
 	}
 
@@ -66,7 +65,7 @@ func runHealth(cmd *cobra.Command, args []string) error {
 			"health": "degraded",
 			"error":  "Invalid API response",
 		}
-		writeResult(outputFmt, result)
+		writeResult(result)
 		return nil
 	}
 
@@ -81,6 +80,6 @@ func runHealth(cmd *cobra.Command, args []string) error {
 		"block_height": block.BlockHeader.RawData.Number,
 	}
 
-	writeResult(outputFmt, result)
+	writeResult(result)
 	return nil
 }

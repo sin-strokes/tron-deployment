@@ -33,16 +33,15 @@ func init() {
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
-	outputFmt, _ := cmd.Flags().GetString("output")
 
 	parsed, err := intent.Load(verifyIntentPath)
 	if err != nil {
-		return exitWithError(outputFmt, "VALIDATION_ERROR", output.ExitValidationError, err.Error())
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
 
 	tgt, err := resolveTarget(parsed)
 	if err != nil {
-		return exitWithError(outputFmt, "TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
+		return exitWithError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
 	}
 	if closer, ok := tgt.(interface{ Close() error }); ok {
 		defer closer.Close()
@@ -74,7 +73,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 					"block_height": block.BlockHeader.RawData.Number,
 					"attempts":     attempt,
 				}
-				writeResult(outputFmt, result)
+				writeResult(result)
 				return nil
 			}
 		}
@@ -85,7 +84,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		time.Sleep(pollInterval)
 	}
 
-	return exitWithError(outputFmt, "VERIFY_TIMEOUT", output.ExitGeneralError,
+	return exitWithError("VERIFY_TIMEOUT", output.ExitGeneralError,
 		fmt.Sprintf("Node %s not healthy after %s", parsed.Name, verifyTimeout),
 		"Check node logs: trond logs "+parsed.Name,
 		"Run diagnostics: trond diagnose "+parsed.Name)

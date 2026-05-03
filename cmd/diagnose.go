@@ -26,7 +26,7 @@ func runDiagnose(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	outputFmt, _ := cmd.Flags().GetString("output")
 
-	nc, err := resolveNodeContext(name, outputFmt)
+	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err
 	}

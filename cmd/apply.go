@@ -48,13 +48,12 @@ func init() {
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
-	outputFmt, _ := cmd.Flags().GetString("output")
 	start := time.Now()
 
 	// 1. Load + validate intent.
 	parsed, err := intent.Load(applyIntentPath)
 	if err != nil {
-		return exitWithError(outputFmt, "VALIDATION_ERROR", output.ExitValidationError, err.Error(),
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error(),
 			"Check intent file syntax", "Run: trond config validate "+applyIntentPath)
 	}
 
@@ -62,7 +61,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	// layer because it's tied to the operator's shell environment.
 	tgt, err := resolveTarget(parsed)
 	if err != nil {
-		return exitWithError(outputFmt, "TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error(),
+		return exitWithError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error(),
 			"Check SSH connectivity", "Verify Docker is running")
 	}
 
@@ -70,7 +69,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	dir := stateDir()
 	lock := state.NewLock(dir)
 	if err := lock.Acquire(); err != nil {
-		return exitWithError(outputFmt, "LOCK_ERROR", output.ExitGeneralError, "Failed to acquire state lock: "+err.Error(),
+		return exitWithError("LOCK_ERROR", output.ExitGeneralError, "Failed to acquire state lock: "+err.Error(),
 			"Check if another trond process is running")
 	}
 	defer lock.Release()
@@ -78,11 +77,11 @@ func runApply(cmd *cobra.Command, args []string) error {
 	// 4. Load current state.
 	store, err := state.NewStore(statePath())
 	if err != nil {
-		return exitWithError(outputFmt, "STATE_ERROR", output.ExitGeneralError, err.Error())
+		return exitWithError("STATE_ERROR", output.ExitGeneralError, err.Error())
 	}
 	deployState, err := store.Load()
 	if err != nil {
-		return exitWithError(outputFmt, "STATE_ERROR", output.ExitGeneralError, err.Error())
+		return exitWithError("STATE_ERROR", output.ExitGeneralError, err.Error())
 	}
 
 	// 5. Compute intent hash.
@@ -94,7 +93,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	// only need to guard the destructive change-on-existing-node case.
 	existing := store.GetNode(deployState, parsed.Name)
 	if existing != nil && existing.IntentHash != intentHash && !applyAutoApprove {
-		return exitWithError(outputFmt, "HUMAN_REQUIRED", output.ExitHumanRequired,
+		return exitWithError("HUMAN_REQUIRED", output.ExitHumanRequired,
 			fmt.Sprintf("Changes detected for node %q. Review with: trond plan --intent %s", parsed.Name, applyIntentPath),
 			"Re-run with --auto-approve to apply changes",
 			fmt.Sprintf("trond apply --intent %s --auto-approve", applyIntentPath))
@@ -115,7 +114,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		WaitTimeout:    applyWaitTimeout,
 	})
 	if err != nil {
-		return exitWithError(outputFmt, "DEPLOY_ERROR", output.ExitGeneralError, err.Error(),
+		return exitWithError("DEPLOY_ERROR", output.ExitGeneralError, err.Error(),
 			"Check Docker is running: docker info",
 			"Check port availability")
 	}
@@ -155,7 +154,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 			resultMap["ready"] = false
 			resultMap["wait_error"] = res.WaitError
 			if !quiet {
-				writeResult(outputFmt, resultMap)
+				writeResult(resultMap)
 			}
 			return output.NewError("WAIT_TIMEOUT", output.ExitGeneralError,
 				fmt.Sprintf("deploy succeeded but node %s did not become ready: %s", parsed.Name, res.WaitError)).
@@ -165,7 +164,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 
 	if !quiet {
-		writeResult(outputFmt, resultMap)
+		writeResult(resultMap)
 	}
 	return nil
 }
@@ -212,10 +211,13 @@ func findTemplatesDir() string {
 }
 
 // exitWithError returns a StructuredError for propagation through cobra RunE.
-func exitWithError(_ string, code string, exitCode int, msg string, suggestions ...string) error {
+func exitWithError(code string, exitCode int, msg string, suggestions ...string) error {
 	return output.NewError(code, exitCode, msg).WithSuggestions(suggestions...)
 }
 
-func writeResult(_ string, result any) {
+// writeResult emits result as JSON on stdout. The output format is
+// always JSON for now — text-mode output is rendered by each
+// command's RunE before reaching this helper.
+func writeResult(result any) {
 	output.WriteJSON(os.Stdout, result)
 }

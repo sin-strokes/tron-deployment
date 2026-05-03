@@ -28,16 +28,15 @@ func init() {
 }
 
 func runBootstrap(cmd *cobra.Command, args []string) error {
-	outputFmt, _ := cmd.Flags().GetString("output")
 
 	parsed, err := intent.Load(bootstrapIntentPath)
 	if err != nil {
-		return exitWithError(outputFmt, "VALIDATION_ERROR", output.ExitValidationError, err.Error())
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error())
 	}
 
 	tgt, err := resolveTarget(parsed)
 	if err != nil {
-		return exitWithError(outputFmt, "TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
+		return exitWithError("TARGET_UNREACHABLE", output.ExitTargetUnreachable, err.Error())
 	}
 	if closer, ok := tgt.(interface{ Close() error }); ok {
 		defer closer.Close()
@@ -54,14 +53,14 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	switch runtimeType {
 	case "docker":
 		if err := installDocker(ctx, tgt); err != nil {
-			return exitWithError(outputFmt, "BOOTSTRAP_ERROR", output.ExitGeneralError,
+			return exitWithError("BOOTSTRAP_ERROR", output.ExitGeneralError,
 				fmt.Sprintf("Failed to install Docker: %v", err))
 		}
 		installed = append(installed, "docker")
 
 	case "jar":
 		if err := installJDK(ctx, tgt); err != nil {
-			return exitWithError(outputFmt, "BOOTSTRAP_ERROR", output.ExitGeneralError,
+			return exitWithError("BOOTSTRAP_ERROR", output.ExitGeneralError,
 				fmt.Sprintf("Failed to install JDK: %v", err))
 		}
 		installed = append(installed, "jdk")
@@ -79,7 +78,7 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		"installed": installed,
 		"target":    tgt.String(),
 	}
-	writeResult(outputFmt, result)
+	writeResult(result)
 	return nil
 }
 

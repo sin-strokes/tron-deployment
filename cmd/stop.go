@@ -22,10 +22,9 @@ func init() {
 
 func runStop(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	outputFmt, _ := cmd.Flags().GetString("output")
 	start := time.Now()
 
-	nc, err := resolveNodeContext(name, outputFmt)
+	nc, err := resolveNodeContext(name)
 	if err != nil {
 		return err
 	}
@@ -33,7 +32,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 
 	if err := nc.Runtime.Stop(cmd.Context(), name); err != nil {
 		writeAudit(auditEvent{Command: "stop", Node: name, Target: nc.Target.String(), Result: "error", ErrorCode: "STOP_ERROR", Start: start})
-		return exitWithError(outputFmt, "STOP_ERROR", output.ExitGeneralError,
+		return exitWithError("STOP_ERROR", output.ExitGeneralError,
 			fmt.Sprintf("Failed to stop %s: %v", name, err))
 	}
 
@@ -41,6 +40,6 @@ func runStop(cmd *cobra.Command, args []string) error {
 	nc.SaveState()
 	writeAudit(auditEvent{Command: "stop", Node: name, Target: nc.Target.String(), Result: "success", Start: start})
 
-	writeResult(outputFmt, map[string]any{"name": name, "status": "stopped"})
+	writeResult(map[string]any{"name": name, "status": "stopped"})
 	return nil
 }

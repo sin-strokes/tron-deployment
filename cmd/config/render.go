@@ -111,7 +111,15 @@ func runRender(cmd *cobra.Command, args []string) error {
 			JVMArgs:  jvmArgs,
 		})
 
-		if renderOutputDir != "" && outputFmt != "json" {
+		// --output-dir is an explicit "write to disk" request — we
+		// honour it regardless of --output text/json. Earlier this
+		// branch was gated on outputFmt != "json", which silently
+		// suppressed file writes when an agent wanted both the JSON
+		// manifest AND the rendered files (the common pipeline:
+		// render → docker compose up). The JSON manifest includes
+		// the rendered bodies inline; that doesn't preclude also
+		// writing them.
+		if renderOutputDir != "" {
 			if err := writeRenderedFiles(renderOutputDir, parsed.Name, hocon, composeYAML, systemdUnit); err != nil {
 				return err
 			}

@@ -51,7 +51,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	node := store.GetNode(deployState, name)
 	if node == nil {
-		return exitWithError(outputFmt, "NODE_NOT_FOUND", output.ExitGeneralError,
+		return exitWithError("NODE_NOT_FOUND", output.ExitGeneralError,
 			fmt.Sprintf("Node %q not found", name),
 			"Run: trond list")
 	}

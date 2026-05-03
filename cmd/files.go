@@ -58,7 +58,7 @@ func runFilesPut(cmd *cobra.Command, args []string) error {
 	nodeName, localSrc, remoteDst := args[0], args[1], args[2]
 	outputFmt, _ := cmd.Flags().GetString("output")
 
-	nc, err := resolveNodeContext(nodeName, outputFmt)
+	nc, err := resolveNodeContext(nodeName)
 	if err != nil {
 		return err
 	}
@@ -110,7 +110,7 @@ func runFilesGet(cmd *cobra.Command, args []string) error {
 	nodeName, remoteSrc, localDst := args[0], args[1], args[2]
 	outputFmt, _ := cmd.Flags().GetString("output")
 
-	nc, err := resolveNodeContext(nodeName, outputFmt)
+	nc, err := resolveNodeContext(nodeName)
 	if err != nil {
 		return err
 	}
