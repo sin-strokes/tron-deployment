@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/verify-config.schema.json",
+  "title": "trond verify-config output",
+  "description": "Returned by `trond verify-config <node> --intent <path> -o json`. Reports whether the running node's live config matches what trond would render from the supplied intent right now. Agents reconciling desired-vs-actual state read in_sync.",
+  "type": "object",
+  "required": ["name", "intent", "in_sync", "diff_count", "diffs"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Managed node name (matches the positional arg)."
+    },
+    "intent": {
+      "type": "string",
+      "description": "intent.name from the supplied --intent file. May differ from `name` if the intent has been renamed since deploy."
+    },
+    "intent_path": {
+      "type": "string",
+      "description": "Absolute path of the --intent file."
+    },
+    "in_sync": {
+      "type": "boolean",
+      "description": "true when the rendered config is byte-equal to the live config; false when any line differs."
+    },
+    "live_lines": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of lines in the live config pulled from the container."
+    },
+    "desired_lines": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of lines in the freshly-rendered config from the intent."
+    },
+    "diff_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Length of diffs[]; 0 iff in_sync is true."
+    },
+    "diffs": {
+      "type": "array",
+      "description": "Per-line diff entries. Each line begins with '- ' (only in live), '+ ' (only in desired), or '  ' (context line when --context was passed).",
+      "items": {
+        "type": "string",
+        "examples": ["- node.maxConnections = 30", "+ node.maxConnections = 80"]
+      }
+    }
+  }
+}

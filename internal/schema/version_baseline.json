@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "entries": [
     {
       "name": "apply",
@@ -96,6 +96,10 @@
     {
       "name": "verify",
       "hash": "1d83dffdd94f5d1d59806da8469cb042e5af3b021d1d9e67b5f6295975fa08f9"
+    },
+    {
+      "name": "verify-config",
+      "hash": "89f43f7987af42678c0e0f672142170ed659a45a040748f064f3552a5d50d42f"
     },
     {
       "name": "version",

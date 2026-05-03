@@ -65,6 +65,7 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, trondVersion string) 
 	registerDiagnosticTools(server)
 	registerSnapshotTools(server)
 	registerKnowledgeTools(server)
+	registerDriftTools(server)
 
 	// MCP's stdio transport is a thin wrapper around io.Reader/Writer
 	// pairs; tests pass net.Pipe() ends, real use passes os.Stdin/Stdout.

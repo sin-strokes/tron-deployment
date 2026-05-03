@@ -93,6 +93,7 @@ func TestSchemaCoverage(t *testing.T) {
 		"trond snapshot sources":  "snapshot-sources",
 		"trond status":            "status",
 		"trond verify":            "verify",
+		"trond verify-config":     "verify-config",
 		"trond version":           "version",
 	}
 
