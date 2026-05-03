@@ -34,6 +34,8 @@ func newConnectedPair(t *testing.T) (*mcp.ClientSession, func()) {
 	registerKnowledgeTools(server)
 	registerLifecycleTools(server)
 	registerDriftTools(server)
+	registerResources(server)
+	registerPrompts(server)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "test"}, nil)
 

@@ -67,6 +67,21 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, trondVersion string) 
 	registerKnowledgeTools(server)
 	registerDriftTools(server)
 
+	// Beyond tools, MCP exposes resources (read-only data agents
+	// attach to context) and prompts (slash-command workflows).
+	registerResources(server)
+	registerPrompts(server)
+
+	// Beyond tools, MCP exposes resources (read-only data the agent
+	// can attach to a conversation) and prompts (pre-baked workflow
+	// templates the user invokes via slash-commands). Resources let
+	// the agent see state.json + audit.log + the schema manifest
+	// without per-call tool invocations; prompts encode AGENTS.md's
+	// canonical workflows so a fresh agent session lands on the
+	// right tool sequence the first time.
+	registerResources(server)
+	registerPrompts(server)
+
 	// MCP's stdio transport is a thin wrapper around io.Reader/Writer
 	// pairs; tests pass net.Pipe() ends, real use passes os.Stdin/Stdout.
 	return server.Run(ctx, &mcp.StdioTransport{})
@@ -90,6 +105,19 @@ the canonical chains documented in AGENTS.md (the TRON deployment
 repo's agent guide). Always validate intent files with config_validate
 before plan/apply. Pass auto_approve=true to apply only when the user
 has explicitly approved the diff shown by plan.
+
+Beyond tools, this server exposes:
+
+  Resources (read-only data — attach to context, don't tool-call):
+    trond://state            — current state.json (every managed node)
+    trond://audit-log        — last 200 audit log entries (JSONL)
+    trond://schema-manifest  — all output schemas + SchemaVersion
+
+  Prompts (slash-command workflows the user picks):
+    deploy_fullnode         — validate → plan → apply --wait → status
+    diagnose_failing_node   — status → diagnose → logs → suggest
+    setup_private_network   — multi-node bootstrap with SR_PRIVATE_KEY
+    recover_failed_upgrade  — diagnose → rollback → verify
 
 Long-running tools emit MCP progress notifications; surface those to
 the user.`
