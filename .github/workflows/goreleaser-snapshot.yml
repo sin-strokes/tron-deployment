@@ -54,19 +54,23 @@ jobs:
           ls -la dist/*-snapshot/ 2>/dev/null || true
 
       - name: Assert advertised artifacts exist
+        # goreleaser names archives as `<binary>_<version>_<os>_<arch>.<ext>`
+        # with underscores (its default name_template), not hyphens.
         # Each format below is in goreleaser.yaml; if removed, drop
         # from the matrix here at the same time.
         run: |
           set -e
           fail=0
           want_globs=(
-            'dist/*-linux-amd64*'
-            'dist/*-linux-arm64*'
-            'dist/*-darwin-amd64*'
-            'dist/*-darwin-arm64*'
+            'dist/*_linux_amd64.tar.gz'
+            'dist/*_linux_arm64.tar.gz'
+            'dist/*_darwin_amd64.tar.gz'
+            'dist/*_darwin_arm64.tar.gz'
             'dist/*.deb'
             'dist/*.rpm'
-            'dist/*.tar.gz'
+            'dist/*.apk'
+            'dist/checksums.txt'
+            'dist/homebrew/*.rb'
           )
           for g in "${want_globs[@]}"; do
             files=( $g )
