@@ -38,7 +38,8 @@ import (
 //	        snapshot-download, snapshot-jobs, error envelope).
 //	1.1.0 — add recipe-list / recipe-show / recipe-run schemas (no
 //	        changes to existing schemas).
-const SchemaVersion = "1.1.0"
+//	1.2.0 — add auto-heal schema (new `trond auto-heal` command).
+const SchemaVersion = "1.2.0"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output
 // schema files. Embedded $id values inside each schema mirror this so

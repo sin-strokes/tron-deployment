@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/auto-heal.schema.json",
+  "title": "trond auto-heal output",
+  "description": "Returned by `trond auto-heal <node> -o json`. The auto-fix counterpart to diagnose: runs the diagnostic suite and applies known-safe remediations to fail checks. Conservative — anything destructive (remove, network destroy, --force) stays behind a HUMAN_REQUIRED gate.",
+  "type": "object",
+  "required": ["name", "healed", "skipped", "still_failing"],
+  "properties": {
+    "name": { "type": "string" },
+    "dry_run": {
+      "type": "boolean",
+      "description": "True if --dry-run was passed; `healed[].result` will be 'dry_run' rather than 'succeeded'/'failed'."
+    },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "healed": {
+      "type": "array",
+      "description": "Auto-fix attempts: one entry per fail check that had a known remediation.",
+      "items": {
+        "type": "object",
+        "required": ["check", "action", "result"],
+        "properties": {
+          "check":   { "type": "string", "description": "Diagnose check name (e.g. port_listening)." },
+          "action":  { "type": "string", "description": "Action invoked (e.g. start, restart)." },
+          "result":  { "type": "string", "enum": ["succeeded", "failed", "dry_run"] },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "description": "Fail checks heal explicitly did NOT touch (no auto-fix mapped). Surfaces suggestions[] so the operator has the same context.",
+      "items": {
+        "type": "object",
+        "required": ["check", "reason"],
+        "properties": {
+          "check":  { "type": "string" },
+          "reason": { "type": "string" },
+          "suggestions": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "still_failing": {
+      "type": "array",
+      "description": "CheckResult entries that remain fail even after the heal pass — either skipped or where the action returned an error.",
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name":        { "type": "string" },
+          "status":      { "type": "string", "enum": ["pass", "warning", "fail"] },
+          "message":     { "type": "string" },
+          "suggestions": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

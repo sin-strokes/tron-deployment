@@ -65,6 +65,12 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, trondVersion string) 
 	registerDiagnosticTools(server)
 	registerSnapshotTools(server)
 	registerKnowledgeTools(server)
+	registerHealTools(server)
+
+	// Beyond tools, MCP exposes resources (read-only data the agent
+	// attaches to a conversation) and resource templates (per-node
+	// dynamic URIs).
+	registerResources(server)
 
 	// MCP's stdio transport is a thin wrapper around io.Reader/Writer
 	// pairs; tests pass net.Pipe() ends, real use passes os.Stdin/Stdout.
