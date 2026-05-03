@@ -32,17 +32,22 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	store, err := state.NewStore(statePath())
 	if err != nil {
-		return err
+		return exitWithError("STATE_ERROR", output.ExitGeneralError, err.Error(),
+			"Check ~/.trond/state.json permissions",
+			"If state is corrupt, back it up and re-deploy from your intent files")
 	}
 
 	deployState, err := store.Load()
 	if err != nil {
-		return err
+		return exitWithError("STATE_ERROR", output.ExitGeneralError, err.Error(),
+			"Inspect state.json: cat $TROND_STATE_DIR/state.json or ~/.trond/state.json",
+			"Back up the file and re-create with `trond apply` once syntax is fixed")
 	}
 
 	filter, err := parseLabelFilter(listLabelFlags)
 	if err != nil {
-		return err
+		return exitWithError("VALIDATION_ERROR", output.ExitValidationError, err.Error(),
+			"Use --label key=value (repeatable for AND semantics)")
 	}
 	nodes := deployState.Nodes
 	if filter != nil {
