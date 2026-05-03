@@ -54,18 +54,23 @@ const (
 // mirrors are plain `http://<ip>` directory listings. The struct is the
 // minimum trond needs to (a) render a `sources` table and (b) construct
 // per-backup tarball URLs in download.go.
+// JSON tags mirror schemas/output/snapshot-sources.schema.json so a
+// `trond snapshot sources -o json` round-trips through the published
+// schema. Field names that differ from the schema (DBKind→kind,
+// DBEngine→engine, ApproxSizeGB→approx_size_gb) keep their Go names
+// for clarity in source.
 type Source struct {
-	Network        Network
-	DBKind         DBKind
-	DBEngine       DBEngine
-	Region         Region
-	Domain         string // primary key for --domain flag matching
-	BaseURL        string // "http(s)://host[/prefix]" — no trailing slash
-	IndexStrategy  string // "html" or "date" — how ListBackups builds the list
-	IncludesIntTx  bool   // true if archive includes internal transactions
-	IncludesAcctTx bool   // true if account-history TRX balance is included
-	ApproxSizeGB   int    // approximate compressed size, for human display
-	Description    string // shown by `trond snapshot sources`
+	Network        Network  `json:"network"`
+	DBKind         DBKind   `json:"kind"`
+	DBEngine       DBEngine `json:"engine"`
+	Region         Region   `json:"region,omitempty"`
+	Domain         string   `json:"domain"`                   // primary key for --domain flag matching
+	BaseURL        string   `json:"base_url"`                 // "http(s)://host[/prefix]" — no trailing slash
+	IndexStrategy  string   `json:"index_strategy,omitempty"` // "html" or "date" — how ListBackups builds the list
+	IncludesIntTx  bool     `json:"includes_int_tx,omitempty"`
+	IncludesAcctTx bool     `json:"includes_acct_tx,omitempty"`
+	ApproxSizeGB   int      `json:"approx_size_gb,omitempty"`
+	Description    string   `json:"description,omitempty"`
 }
 
 // SourceTable is the curated list of upstream mirrors. Order matters

@@ -27,13 +27,12 @@ import (
 //	}
 //
 // Once configured the agent can call:
-//   - list, status, inspect, health, doctor, version
+//   - list, status, inspect, health, doctor, version, diagnose
 //   - config_validate, config_render, plan
+//   - apply (in-process via internal/apply.Apply — same code path
+//     as `trond apply`, no subprocess re-exec)
 //   - snapshot_sources, snapshot_list, snapshot_jobs, snapshot_download
 //   - knowledge_list, knowledge_get
-//
-// `apply` is registered but currently routes back to a CLI-shell hint
-// pending a refactor of cmd/apply.go's RunE into a pure function.
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "Run trond as a Model Context Protocol server (stdio)",

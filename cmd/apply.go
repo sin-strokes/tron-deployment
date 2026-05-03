@@ -121,25 +121,23 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 
 	// 8. Translate Result back into the JSON shape the CLI promises.
-	// We keep the legacy "status" / "changes" / "endpoints" keys for
-	// agents that already parse those — internally Apply.Result uses
-	// the cleaner "outcome" name.
+	// Field names match schemas/output/apply.schema.json + AGENTS.md:
+	// {name, result, intent_hash, endpoints, duration_ms, ready,
+	// runtime, version}. The internal/apply.Result uses "outcome" as
+	// the in-Go name; we surface it as "result" on the wire because
+	// that's what the public contract uses.
 	durationMs := time.Since(start).Milliseconds()
 	resultMap := map[string]any{
 		"name":        res.Name,
-		"status":      "running",
+		"result":      res.Outcome,
+		"intent_hash": res.IntentHash,
 		"runtime":     res.Runtime,
 		"version":     res.Version,
 		"endpoints":   res.Endpoints,
 		"duration_ms": durationMs,
-		"changes":     diffChanges(res.Outcome),
 	}
-	if res.Outcome == "no_change" {
-		resultMap["status"] = ""
-		if existing != nil {
-			resultMap["status"] = existing.Status
-		}
-		resultMap["message"] = "No changes detected"
+	if res.ConfigHash != "" {
+		resultMap["config_hash"] = res.ConfigHash
 	}
 
 	writeAudit(auditEvent{
@@ -168,22 +166,6 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	if !quiet {
 		writeResult(outputFmt, resultMap)
-	}
-	return nil
-}
-
-// diffChanges synthesises the legacy `changes[]` array from an Apply
-// outcome. Pre-extraction the array carried per-step strings; we
-// reduce that to a single sentinel so JSON consumers keep working
-// without claiming false granularity.
-func diffChanges(outcome string) []map[string]string {
-	switch outcome {
-	case "no_change":
-		return []map[string]string{}
-	case "created":
-		return []map[string]string{{"type": "deploy", "description": "Node created"}}
-	case "updated":
-		return []map[string]string{{"type": "deploy", "description": "Node updated"}}
 	}
 	return nil
 }

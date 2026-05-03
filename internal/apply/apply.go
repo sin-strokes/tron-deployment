@@ -122,7 +122,14 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 	// No-op short-circuit. Same hash → nothing to do regardless of
 	// the existing node's status. Callers that need "force redeploy
 	// of a stopped node" pass IntentHash="" or simply omit Existing.
+	//
+	// Endpoints is reconstructed from the intent's port spec rather
+	// than skipped: apply.schema.json declares it as an object and
+	// emitting `null` (the zero value of map[string]string) violates
+	// the contract for agents that always expect to find host:port
+	// pairs to probe.
 	if opts.Existing != nil && opts.Existing.IntentHash == opts.IntentHash {
+		ports := opts.Intent.Nodes[0].Ports
 		return &Result{
 			Name:       opts.Intent.Name,
 			Outcome:    "no_change",
@@ -130,6 +137,10 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 			ConfigHash: opts.Existing.ConfigHash,
 			Version:    opts.Existing.Version,
 			Runtime:    opts.Existing.Runtime,
+			Endpoints: map[string]string{
+				"http": fmt.Sprintf("http://127.0.0.1:%d", ports.HTTP),
+				"grpc": fmt.Sprintf("127.0.0.1:%d", ports.GRPC),
+			},
 			DurationMs: time.Since(start).Milliseconds(),
 		}, nil
 	}

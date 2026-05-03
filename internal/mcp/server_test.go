@@ -135,11 +135,11 @@ func TestList_EmptyState_ReturnsEmptyArray(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("list returned IsError: %s", extractText(t, res))
 	}
-	var v map[string]any
-	_ = json.Unmarshal([]byte(extractText(t, res)), &v)
-	nodes, ok := v["nodes"].([]any)
-	if !ok {
-		t.Fatalf("nodes field missing or wrong type: %v", v)
+	// list returns a flat array (matches `trond list -o json` and
+	// schemas/output/list.schema.json).
+	var nodes []any
+	if err := json.Unmarshal([]byte(extractText(t, res)), &nodes); err != nil {
+		t.Fatalf("list body is not a JSON array: %v\n%s", err, extractText(t, res))
 	}
 	if len(nodes) != 0 {
 		t.Fatalf("expected 0 nodes in fresh state-dir, got %d", len(nodes))

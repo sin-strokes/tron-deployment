@@ -86,9 +86,19 @@ func runPreflight(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// target / overall are part of the published preflight schema
+	// (schemas/output/preflight.schema.json) — agents key off both.
+	targetType := parsed.Target.Type
+	if targetType == "" {
+		targetType = "local"
+	}
 	result := map[string]any{
+		"target":  targetType,
 		"checks":  checks,
 		"overall": "pass",
+	}
+	if targetType == "ssh" {
+		result["host"] = parsed.Target.Host
 	}
 	if !allPassed {
 		result["overall"] = "fail"
