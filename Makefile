@@ -41,7 +41,7 @@ endif
 
 GOFLAGS    ?=
 
-.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates sync-schemas snapshot-schema-baseline docs man cover vuln bootstrap-go
+.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates sync-schemas snapshot-schema-baseline update-render-golden docs man cover vuln bootstrap-go
 
 ## bootstrap-go: Download + verify the project-local Go toolchain
 ##               (idempotent; safe to re-run; no-op if already current)
@@ -155,3 +155,11 @@ sync-schemas:
 snapshot-schema-baseline: $(GO_BOOTSTRAP)
 	TROND_SCHEMA_UPDATE_BASELINE=1 $(GO) test -run TestSchemaVersionShape ./internal/schema/
 	@echo "baseline refreshed. Commit version_baseline.json with the SchemaVersion bump."
+
+## update-render-golden: Refresh internal/render/testdata/golden/*.{conf,compose.yaml}
+##                       after intentional template changes. TestRenderHOCON_Golden
+##                       compares current render output against these files; run
+##                       this target to accept the new output as the new baseline.
+update-render-golden: $(GO_BOOTSTRAP)
+	TROND_UPDATE_GOLDEN=1 $(GO) test -run TestRenderHOCON_Golden ./internal/render/
+	@echo "render golden files refreshed under internal/render/testdata/golden/."
