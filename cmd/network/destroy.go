@@ -112,6 +112,30 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 			"failed to persist state after destroy: "+err.Error())
 	}
 
+	// Tear down the shared docker network the matching `network create`
+	// stood up. Best-effort: a leftover network is harmless on next
+	// run (create re-uses it), so we ignore failures rather than
+	// surfacing them as the destroy result.
+	if len(removed) > 0 {
+		// Resolve a target for the network rm. We just used one for
+		// each node above; either is fine — re-pick from the first
+		// node we just removed.
+		for _, n := range deployState.Nodes {
+			if n.Name == removed[0] {
+				if tgt, terr := resolveTargetForNode(&n); terr == nil {
+					_, _ = tgt.Exec(cmd.Context(), "docker", "network", "rm", "trond-"+destroyConfirm)
+					closeTarget(tgt)
+				}
+				break
+			}
+		}
+		// We also try a local-target rm even if no surviving node remained
+		// in state (the loop above iterates the post-RemoveNode state),
+		// since the most common case is "all nodes removed, no entries
+		// left." Falls back silently.
+		_, _ = target.NewLocalTarget().Exec(cmd.Context(), "docker", "network", "rm", "trond-"+destroyConfirm)
+	}
+
 	if len(failures) > 0 {
 		auditResult = "partial"
 	}

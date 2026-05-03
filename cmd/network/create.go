@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -74,6 +75,32 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// nodes' "<name>:<p2p_port>" — except when the user supplied an
 	// explicit list, which we never override.
 	autoWireActivePeers(parsed)
+
+	// Each node deploys via its own `docker compose -p <node_name> up`,
+	// which gives it a per-project bridge network. That isolates the
+	// nodes from each other — they can't resolve sibling container
+	// names. We solve it by creating one shared user-defined network
+	// up front (`trond-<intent.name>`) and wiring every rendered
+	// compose file to attach to it via an external-network reference.
+	// docker network create is idempotent enough: re-creating returns
+	// non-zero, which we tolerate as "already exists".
+	sharedNet := "trond-" + parsed.Name
+	if _, err := tgt.Exec(cmd.Context(), "docker", "network", "inspect", sharedNet); err != nil {
+		if _, err := tgt.Exec(cmd.Context(), "docker", "network", "create", sharedNet); err != nil {
+			return output.NewError("DEPLOY_ERROR", output.ExitGeneralError,
+				"create shared docker network "+sharedNet+": "+err.Error()).
+				WithSuggestions("Confirm Docker is running",
+					"Try `docker network rm "+sharedNet+"` then re-run `network create`")
+		}
+	}
+	// Auto-attach the shared network to every node's compose so peer
+	// resolution works. Preserve any networks the user already declared.
+	for i := range parsed.Nodes {
+		n := &parsed.Nodes[i]
+		if !slices.Contains(n.Networks, sharedNet) {
+			n.Networks = append(n.Networks, sharedNet)
+		}
+	}
 
 	var deployed []map[string]any
 

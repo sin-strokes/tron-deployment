@@ -1,0 +1,29 @@
+services:
+  my-fullnode:
+    image: tronprotocol/java-tron
+    container_name: my-fullnode
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+      - "50051:50051"
+      - "18888:18888"
+      - "18888:18888/udp"
+      - "8545:8545"
+      - "9527:9527"
+    volumes:
+      - ./my-fullnode.conf:/java-tron/conf/my-fullnode.conf:ro
+      - my-fullnode-data:/java-tron/output-directory
+      - my-fullnode-logs:/java-tron/logs
+    deploy:
+      resources:
+        limits:
+          memory: 16g
+    command:
+      - "-jvm"
+      - "{-Xmx8g -Xms8g -Xmn2g -XX:MaxDirectMemorySize=1g -XX:+HeapDumpOnOutOfMemoryError -XX:+UseTLAB}"
+      - "-c"
+      - "/java-tron/conf/my-fullnode.conf"
+
+volumes:
+  my-fullnode-data:
+  my-fullnode-logs:

@@ -1,0 +1,29 @@
+services:
+  my-witness:
+    image: tronprotocol/java-tron
+    container_name: my-witness
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+      - "50051:50051"
+      - "18888:18888"
+      - "18888:18888/udp"
+      - "9527:9527"
+    volumes:
+      - ./my-witness.conf:/java-tron/conf/my-witness.conf:ro
+      - my-witness-data:/java-tron/output-directory
+      - my-witness-logs:/java-tron/logs
+    deploy:
+      resources:
+        limits:
+          memory: 32g
+    command:
+      - "-jvm"
+      - "{-Xmx14g -Xms14g -Xmn3g -XX:MaxDirectMemorySize=1g -XX:+UseG1GC -XX:G1HeapRegionSize=16m -XX:G1RSetUpdatingPauseTimePercent=5 -XX:InitiatingHeapOccupancyPercent=35 -XX:MaxGCPauseMillis=200 -Xlog:gc*:file=gc.log:time,uptime,level,tags:filecount=10,filesize=100m -XX:+HeapDumpOnOutOfMemoryError -XX:+UseTLAB}"
+      - "-c"
+      - "/java-tron/conf/my-witness.conf"
+      - "--witness"
+
+volumes:
+  my-witness-data:
+  my-witness-logs:

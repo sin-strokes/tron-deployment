@@ -1,0 +1,28 @@
+services:
+  nile-fullnode:
+    image: tronprotocol/java-tron
+    container_name: nile-fullnode
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+      - "50051:50051"
+      - "18888:18888"
+      - "18888:18888/udp"
+      - "8545:8545"
+    volumes:
+      - ./nile-fullnode.conf:/java-tron/conf/nile-fullnode.conf:ro
+      - nile-fullnode-data:/java-tron/output-directory
+      - nile-fullnode-logs:/java-tron/logs
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+    command:
+      - "-jvm"
+      - "{-Xmx4g -Xms4g -Xmn1g -XX:MaxDirectMemorySize=512m -XX:+HeapDumpOnOutOfMemoryError -XX:+UseTLAB}"
+      - "-c"
+      - "/java-tron/conf/nile-fullnode.conf"
+
+volumes:
+  nile-fullnode-data:
+  nile-fullnode-logs:
