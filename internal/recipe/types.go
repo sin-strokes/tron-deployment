@@ -16,62 +16,66 @@ package recipe
 import "encoding/json"
 
 // Recipe is the parsed YAML document.
+//
+// JSON tags mirror schemas/output/recipe-show.schema.json so a CLI
+// `recipe show --output json` round-trips through the published
+// schema. yaml tags drive the source-of-truth (recipes/*.yaml).
 type Recipe struct {
-	Name        string  `yaml:"name"`
-	Description string  `yaml:"description"`
-	Params      []Param `yaml:"params,omitempty"`
-	Steps       []Step  `yaml:"steps"`
+	Name        string  `yaml:"name"        json:"name"`
+	Description string  `yaml:"description" json:"description"`
+	Params      []Param `yaml:"params,omitempty" json:"params,omitempty"`
+	Steps       []Step  `yaml:"steps"       json:"steps"`
 
 	// Rollback section runs only when a step with on_failure=rollback
 	// triggers it (or when --rollback is passed and the recipe has
 	// committed enough state to need cleanup). Steps inside rollback
 	// run in order, errors logged but don't abort each other.
-	Rollback []Step `yaml:"rollback,omitempty"`
+	Rollback []Step `yaml:"rollback,omitempty" json:"rollback,omitempty"`
 }
 
 // Param describes one user-supplied input. Required params with no
 // default cause `recipe run` to fail upfront before any step executes.
 type Param struct {
-	Name        string `yaml:"name"`
-	Type        string `yaml:"type,omitempty"` // string | int | bool | path
-	Required    bool   `yaml:"required,omitempty"`
-	Default     string `yaml:"default,omitempty"`
-	Description string `yaml:"description,omitempty"`
+	Name        string `yaml:"name"                 json:"name"`
+	Type        string `yaml:"type,omitempty"       json:"type,omitempty"` // string | int | bool | path
+	Required    bool   `yaml:"required,omitempty"   json:"required,omitempty"`
+	Default     string `yaml:"default,omitempty"    json:"default,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 // Step is one unit of work. Today only command steps are supported;
 // future kinds (poll, sleep, branch) live behind the same struct so
 // recipes don't need migration when added.
 type Step struct {
-	ID          string `yaml:"id"`
-	Description string `yaml:"description,omitempty"`
+	ID          string `yaml:"id"                   json:"id"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 
 	// Command is the trond subcommand path to invoke, e.g.
 	// "config validate", "snapshot download", "apply". Trond's own
 	// argv prefix is added by the runner.
-	Command string `yaml:"command,omitempty"`
+	Command string `yaml:"command,omitempty" json:"command,omitempty"`
 
 	// Args are appended after the command. Each value goes through
 	// template substitution; references to {{ params.* }} and
 	// {{ steps.<id>.<field> }} are resolved at step time, not at
 	// recipe-load time.
-	Args []string `yaml:"args,omitempty"`
+	Args []string `yaml:"args,omitempty" json:"args,omitempty"`
 
 	// OnFailure decides what happens when the step's exit code is
 	// non-zero. Default = "abort" (stop the recipe with the error).
 	// "continue" logs and proceeds. "rollback" jumps to the recipe's
 	// rollback steps.
-	OnFailure string `yaml:"on_failure,omitempty"`
+	OnFailure string `yaml:"on_failure,omitempty" json:"on_failure,omitempty"`
 
 	// Persist names the JSON fields from this step's stdout that
 	// future steps can reference via {{ steps.<id>.<name> }}. We make
 	// this explicit (rather than capturing all output) so recipes
 	// stay readable about what each step exposes downstream.
-	Persist []string `yaml:"persist,omitempty"`
+	Persist []string `yaml:"persist,omitempty" json:"persist,omitempty"`
 
 	// Skip evaluates a template; if it renders "true" the step is
 	// skipped. Used so optional inputs gate optional steps.
-	Skip string `yaml:"skip,omitempty"`
+	Skip string `yaml:"skip,omitempty" json:"skip,omitempty"`
 }
 
 // StepResult records what one step produced. Captured by the runner

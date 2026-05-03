@@ -3,23 +3,22 @@
   "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/network-create.schema.json",
   "title": "trond network create output",
   "type": "object",
-  "required": ["name", "nodes"],
+  "required": ["network", "nodes"],
   "properties": {
-    "name":  { "type": "string" },
+    "network": { "type": "string", "description": "The intent's `name:` — used as the network identifier." },
     "nodes": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "endpoints"],
+        "required": ["name"],
         "properties": {
-          "name":      { "type": "string" },
+          "name":      { "type": "string", "description": "Container name. Format: <network>-node<index>." },
           "type":      { "type": "string", "enum": ["fullnode", "witness", "solidity", "lite"] },
           "endpoints": { "type": "object", "additionalProperties": { "type": "string" } },
-          "ready":     { "type": "boolean" }
+          "ready":     { "type": "boolean" },
+          "error":     { "type": "string", "description": "Present only when this node failed to deploy; sibling nodes are still attempted." }
         }
       }
-    },
-    "ready_count": { "type": "integer", "minimum": 0 },
-    "duration_ms": { "type": "integer", "minimum": 0 }
+    }
   }
 }

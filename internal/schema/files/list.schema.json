@@ -2,26 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/list.schema.json",
   "title": "trond list output",
-  "description": "Returned by `trond list -o json`. Inventory of every node in state.json (after optional --label filter).",
-  "type": "object",
-  "required": ["nodes"],
-  "properties": {
-    "nodes": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["name", "status"],
-        "properties": {
-          "name":         { "type": "string" },
-          "status":       { "type": "string", "enum": ["running", "stopped", "error", "unknown"] },
-          "runtime":      { "type": "string", "enum": ["docker", "jar"] },
-          "version":      { "type": "string" },
-          "network":      { "type": "string" },
-          "last_applied": { "type": "string", "format": "date-time" },
-          "labels":       { "type": "object", "additionalProperties": { "type": "string" } },
-          "target_type":  { "type": "string", "enum": ["local", "ssh"] }
-        }
-      }
+  "description": "Returned by `trond list -o json`. Flat array of every node in state.json (after optional --label filter). Always an array, never null — empty when no nodes are managed.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["name", "status"],
+    "properties": {
+      "name":         { "type": "string" },
+      "status":       { "type": "string", "enum": ["running", "stopped", "error", "unknown"] },
+      "runtime":      { "type": "string", "enum": ["docker", "jar"] },
+      "version":      { "type": "string" },
+      "network":      { "type": "string" },
+      "last_applied": { "type": "string", "format": "date-time" },
+      "labels":       { "type": "object", "additionalProperties": { "type": "string" } },
+      "target_type":  { "type": "string", "enum": ["local", "ssh"] }
     }
   }
 }

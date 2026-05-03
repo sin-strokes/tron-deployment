@@ -57,7 +57,10 @@ func listNodes(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (*mcp.C
 	}
 
 	// Reshape into the same JSON we'd emit from `trond list -o json`.
-	// Schema: schemas/output/list.schema.json
+	// Schema: schemas/output/list.schema.json — a flat array, not a
+	// {nodes: [...]} object. Matching the CLI shape lets MCP-aware
+	// agents pass results into pipelines that already parse `trond
+	// list` output.
 	rows := make([]map[string]any, 0, len(st.Nodes))
 	for _, n := range st.Nodes {
 		row := map[string]any{
@@ -73,7 +76,7 @@ func listNodes(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (*mcp.C
 		}
 		rows = append(rows, row)
 	}
-	return jsonResult(map[string]any{"nodes": rows})
+	return jsonResult(rows)
 }
 
 func statusForNode(ctx context.Context, _ *mcp.CallToolRequest, args nodeArg) (*mcp.CallToolResult, any, error) {

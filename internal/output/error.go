@@ -8,11 +8,18 @@ import (
 )
 
 // StructuredError represents a CLI error with code, message, and fix suggestions.
+//
+// Wire format matches schemas/output/error.schema.json and the
+// agent contract in AGENTS.md: { error_code, exit_code, message,
+// suggestions }. The historical short `code` field was a CLI-only
+// pre-contract leak and is no longer emitted — agents that ever
+// parsed it must now read `error_code`. The MCP envelope path
+// already used the schema names.
 type StructuredError struct {
-	Code        string   `json:"code"`
+	Code        string   `json:"error_code"`
 	Message     string   `json:"message"`
 	Suggestions []string `json:"suggestions,omitempty"`
-	ExitCode    int      `json:"-"`
+	ExitCode    int      `json:"exit_code"`
 }
 
 func (e *StructuredError) Error() string {

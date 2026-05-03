@@ -276,11 +276,12 @@ trond preflight --intent my-net.yaml -o json
 #    node.active between siblings so peering works under auto_ports.
 SR_KEY=da146374a75310b9666e834ee4ad0866d6f4035967bfc76217c5a495fff9f0d0 \
   trond network create --intent my-net.yaml --wait -o json
-# Output: {"name":"pn", "nodes":[{"name":"pn-witness", "endpoints":{...}}, ...],
-#          "ready_count": 2}
+# Output: {"network":"pn", "nodes":[{"name":"pn-node0", "endpoints":{...}}, ...]}
 
-# 5. Inspect / probe / chaos-test.
-trond network status pn -o json
+# 5. Inspect / probe / chaos-test. `network status` lists every managed
+#    node whose name matches the *-node* pattern (a flat array — no
+#    network-name filter today; use `trond list` for full state).
+trond network status -o json
 trond inspect --network pn -o json
 trond exec pn-witness -- /java-tron/bin/FullNode --help
 

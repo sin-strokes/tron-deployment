@@ -2,9 +2,12 @@ package schema
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +49,105 @@ func TestGetClonesPerCall(t *testing.T) {
 	if b["title"] == "MUTATED" {
 		t.Fatal("Get returned a shared map; clone is not happening")
 	}
+}
+
+// TestEmbeddedSchemasCompileAsJSONSchema is the structural validity
+// gate. The earlier TestEmbeddedSchemasParseAndDeclareID only checks
+// that the file is well-formed JSON and has a few top-level keys; a
+// schema can pass that and still be a malformed JSON Schema (e.g.
+// `"required": "name"` instead of `["name"]`, `$ref` to a missing
+// `$defs` entry, or a draft-incompatible keyword shape).
+//
+// Compiling each schema with santhosh-tekuri/jsonschema is the cheapest
+// way to catch every such bug at unit-test time. Failures print a
+// path inside the schema so the bad keyword is easy to find.
+func TestEmbeddedSchemasCompileAsJSONSchema(t *testing.T) {
+	for _, name := range Names() {
+		t.Run(name, func(t *testing.T) {
+			doc, _ := Get(name)
+			c := jsonschema.NewCompiler()
+			// Use the schema's own $id as the resource URL when present;
+			// fall back to a synthetic URL so the compiler can resolve
+			// internal $refs even for older schemas missing $id.
+			id, _ := doc["$id"].(string)
+			if id == "" {
+				id = "trond:" + name
+			}
+			if err := c.AddResource(id, doc); err != nil {
+				t.Fatalf("AddResource: %v", err)
+			}
+			if _, err := c.Compile(id); err != nil {
+				t.Fatalf("schema %q is not a valid JSON Schema: %v", name, err)
+			}
+		})
+	}
+}
+
+// TestEmbeddedSchemasMatchSourceTree guards against drift between the
+// committed schemas under schemas/ and the copies bundled into the
+// binary at internal/schema/files/. Both must stay in sync because:
+//
+//   - schemas/ is what GitHub renders and what the published $id
+//     URLs resolve to (agents may fetch them online).
+//   - internal/schema/files/ is what `trond schema -o json` exposes
+//     at runtime (offline agents read these).
+//
+// A drift between the two means online and offline agents see
+// different contracts for the same trond version.
+//
+// The test is content-equality, not byte-equality: JSON whitespace
+// differences (one trailing newline, one not) do not count. Anything
+// that matters semantically does count.
+func TestEmbeddedSchemasMatchSourceTree(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("repo root: %v", err)
+	}
+	for _, name := range Names() {
+		t.Run(name, func(t *testing.T) {
+			srcPath := filepath.Join(repoRoot, "schemas", "output", name+".schema.json")
+			// "error" is the only schema that lives at schemas/output/;
+			// all others follow the same naming. Some special-case
+			// schemas could live at schemas/ root but currently none
+			// do — fall back to that path if the output/ copy is
+			// missing, so the test stays robust to future moves.
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				altPath := filepath.Join(repoRoot, "schemas", name+".schema.json")
+				data, err = os.ReadFile(altPath)
+				if err != nil {
+					t.Fatalf("source schema for %q not found at %s or %s",
+						name, srcPath, altPath)
+				}
+			}
+			var srcDoc map[string]any
+			if err := json.Unmarshal(data, &srcDoc); err != nil {
+				t.Fatalf("source %s is not valid JSON: %v", srcPath, err)
+			}
+			embedded, _ := Get(name)
+			if !mapsEqualJSON(srcDoc, embedded) {
+				t.Fatalf("schema %q drift between source tree and embedded copy.\n"+
+					"Re-sync via: cp schemas/output/%s.schema.json internal/schema/files/",
+					name, name)
+			}
+		})
+	}
+}
+
+// mapsEqualJSON compares two maps by re-encoding through encoding/json.
+// Cheaper than rolling a deep-equal that handles all map[string]any
+// shapes correctly (json.Number vs float64, ordering of object keys
+// during marshal — which is sorted by encoding/json).
+func mapsEqualJSON(a, b map[string]any) bool {
+	ab, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return string(ab) == string(bb)
 }
 
 func TestBuild_ProducesExpectedSurface(t *testing.T) {

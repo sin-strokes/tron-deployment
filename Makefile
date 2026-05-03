@@ -41,7 +41,7 @@ endif
 
 GOFLAGS    ?=
 
-.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates docs man cover vuln bootstrap-go
+.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates sync-schemas docs man cover vuln bootstrap-go
 
 ## bootstrap-go: Download + verify the project-local Go toolchain
 ##               (idempotent; safe to re-run; no-op if already current)
@@ -135,3 +135,13 @@ sync-templates:
 	curl -fsSL $(NILE_URL) -o test_net_config.conf
 	cp test_net_config.conf internal/render/templates/test_net_config.conf
 	@echo "templates refreshed. Re-run 'make build test' to confirm."
+
+## sync-schemas: Mirror schemas/output/ into internal/schema/files/ so
+##               the embedded copies bundled into the binary match the
+##               source tree GitHub renders. The unit test
+##               TestEmbeddedSchemasMatchSourceTree fails on drift; run
+##               this target after editing any schema under schemas/.
+sync-schemas:
+	@echo "syncing schemas/output/ → internal/schema/files/"
+	@cp schemas/output/*.schema.json internal/schema/files/
+	@echo "done. Re-run 'make test' to confirm."
