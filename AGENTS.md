@@ -1,9 +1,9 @@
 # AGENTS.md — for AI agents that call `trond`
 
 This file is **for agents that USE trond as a tool** (Claude, ChatGPT,
-Cursor, Cline, autonomous workflows, CI bots, etc.). If you are an
-agent EDITING this repository, read `CLAUDE.md` instead — that one
-covers code style and architecture rules for changes to trond itself.
+Cursor, Cline, autonomous workflows, CI bots, etc.). Agents editing
+this repository should also start here, then read the package-level
+doc comments under `internal/` for architecture detail.
 
 The contract here is meant to be self-contained: an agent that reads
 this file once should be able to deploy, diagnose, and recover TRON
