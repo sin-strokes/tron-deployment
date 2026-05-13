@@ -5,11 +5,13 @@ import (
 	"os"
 )
 
-// ReplayState 记录我们从主网拉到了哪一块。
+// ReplayState records which mainnet block we've pulled up to.
 //
-// 重要：LastMainnetBlock 是**主网块号**，不是私链最高块号。
-// 私链自己也在出块，私链 head 是私链链上的计数，与主网块号脱钩；
-// 唯一可靠的"下次从哪抓"信息只有这里。
+// IMPORTANT: LastMainnetBlock is the **mainnet block number**, not the
+// private chain head. The private chain produces its own blocks; its
+// head is the private chain's own counter and quickly decouples from
+// the mainnet block number. The only reliable "where to resume from"
+// information lives in this file.
 type ReplayState struct {
 	LastMainnetBlock   int64 `json:"last_mainnet_block"`
 	TotalFetched       int64 `json:"total_fetched"`
@@ -18,7 +20,8 @@ type ReplayState struct {
 	TotalSkipped       int64 `json:"total_skipped"`
 }
 
-// loadState 读取 state 文件；不存在 / 解析失败均返回零值。
+// loadState reads the state file; missing or unparseable files return
+// a zero-valued ReplayState.
 func loadState(path string) ReplayState {
 	var s ReplayState
 	data, err := os.ReadFile(path)

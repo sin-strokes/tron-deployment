@@ -1,27 +1,30 @@
 // TRON Mainnet → Private Chain Transaction Replayer.
 //
-// 流程：
-//  1. 从 TronGrid API 拉取主网区块
-//  2. 提取每个区块里的交易
-//  3. 直接 POST 到私链节点的 /wallet/broadcasttransaction
-//  4. 失败 / 跳过写日志，成功推进 state.json 断点
+// Flow:
+//  1. Fetch mainnet blocks via the TronGrid HTTP API.
+//  2. Extract transactions from each block.
+//  3. POST each transaction to the private node's
+//     /wallet/broadcasttransaction endpoint.
+//  4. Write failed / skipped txs to JSONL logs; advance state.json after
+//     each successful block.
 //
-// 私链节点必须运行 relay_skip_signature 分支
-// （跳过 refBlockHash / expiration / TaPos / 部分签名校验）。
+// The private chain node must run a relay_skip_signature-style branch
+// that disables refBlockHash / expiration / TaPos and selected signature
+// checks. See the README "Required java-tron patches" section.
 //
-// 用法：见同目录 README.md
+// Usage: see README.md in this directory.
 //
-// 依赖：纯 Go 标准库
-// Go 版本：1.21+
+// Dependencies: Go standard library only.
+// Go version: 1.21+
 //
-// 文件组织：
-//  - main.go      入口、CLI、Config
-//  - state.go     state 文件读写
-//  - trongrid.go  TronGrid 客户端
-//  - private.go   私链广播客户端
-//  - filter.go    交易过滤规则
-//  - logger.go    jsonl 日志写入
-//  - replayer.go  主循环、节奏控制
+// File layout:
+//   - main.go      entry point, CLI flags, Config
+//   - state.go     state file read/write
+//   - trongrid.go  TronGrid API client
+//   - private.go   private chain broadcast client
+//   - filter.go    transaction filter rules
+//   - logger.go    JSONL logger
+//   - replayer.go  main loop, pacing control
 package main
 
 import (
@@ -35,12 +38,12 @@ import (
 	"syscall"
 )
 
-// Config 是命令行参数 + 环境变量解析出的运行时配置。
+// Config is the runtime configuration parsed from CLI flags + env vars.
 type Config struct {
 	TrongridURL   string
 	TrongridKey   string
 	TrongridQPS   int
-	TpsMultiplier float64 // 私链 TPS = 主网 TPS × 此倍率；pace_sec = 3 / multiplier
+	TpsMultiplier float64 // private TPS = mainnet TPS * multiplier; pace_sec = 3 / multiplier
 	PrivateNode   string
 	Start         int64
 	End           int64
@@ -84,7 +87,7 @@ func parseArgs() Config {
 	return c
 }
 
-// keysOf 返回 map 的所有键，仅用于启动日志。
+// keysOf returns all keys of m, used only for startup logging.
 func keysOf(m map[string]struct{}) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

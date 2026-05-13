@@ -11,20 +11,24 @@ import (
 )
 
 const (
-    // mainnetBlockSec 主网出块间隔；每个主网块就是 3s 的主网时间。
+    // mainnetBlockSec is the mainnet block interval. Each mainnet block
+    // represents 3 seconds of mainnet time.
     mainnetBlockSec = 3
 
-    // tpsMultiplierDefault 默认私链 TPS ≈ 1/3 主网 TPS。
-    // 对应 pace ≈ 9 秒，即每主网块铺到 9s 私链时间。
-    // 适用 3 SR 私链对 27 SR 主网的场景（私链每槽位负担约 9 倍主网密度）。
-    // 用 0.333 而非 1.0/3.0 是为了 --help 显示更干净（pace 实际 9.009s 与 9s 无差别）。
+    // tpsMultiplierDefault: default private TPS is ~1/3 of mainnet TPS.
+    // This corresponds to a 9-second pace (one mainnet block spread over
+    // 9 s of private chain time) and matches the 3 SR private vs 27 SR
+    // mainnet topology (each private SR carries ~9x the mainnet density).
+    // 0.333 is preferred over 1.0/3.0 for a cleaner --help output;
+    // 9.009 s vs 9 s makes no practical difference.
     tpsMultiplierDefault = 0.333
 )
 
-// Replayer 是主重放循环的状态机：
-//   - 拉主网块 → 过滤 → 按节奏广播到私链 → 推进 state
-//   - 失败 / 跳过的交易落 jsonl 日志
-//   - 支持 Ctrl+C 安全退出 + state 持久化续跑
+// Replayer is the state machine driving the main replay loop:
+//   - pull mainnet block → filter → broadcast to private chain with pacing
+//     → advance state
+//   - failed / skipped txs go to JSONL logs
+//   - Ctrl+C triggers a graceful exit with state flushed for resume
 type Replayer struct {
     cfg       Config
     trongrid  *TronGridClient
@@ -35,9 +39,10 @@ type Replayer struct {
     skipLog   *jsonlLogger
 }
 
-// defaultEndOffset 不显式指定 --end 时，默认只跑 start + 这个偏移量。
-// 避免一不小心把"到主网最高块"作为默认，导致跑几小时停不下来。
-// 想跑大区间显式 --end 即可。
+// defaultEndOffset is how many blocks to advance when --end is not set.
+// We deliberately avoid defaulting to "current mainnet head" so that
+// running the tool without --end can't accidentally turn into a multi-hour
+// job. Pass --end explicitly for longer ranges.
 const defaultEndOffset = 10
 
 func (r *Replayer) Run(ctx context.Context) error {
@@ -61,7 +66,8 @@ func (r *Replayer) Run(ctx context.Context) error {
         }
         blockOk, blockFail, blockSkip, err := r.processBlock(ctx, n)
         if err != nil {
-            // 不推进 LastMainnetBlock；但保存最新累计计数器供排查
+            // Don't advance LastMainnetBlock, but flush the cumulative
+            // counters so they're visible for post-mortem.
             if flushErr := r.flushState(); flushErr != nil {
                 log.Printf("save state failed: %v", flushErr)
             }
@@ -87,15 +93,17 @@ func (r *Replayer) Run(ctx context.Context) error {
     return nil
 }
 
-// resolveStartBlock 决定从哪个**主网**块开始抓。
+// resolveStartBlock decides which **mainnet** block to start pulling from.
 //
-// 优先级：
-//  1. --start 显式指定
-//  2. state 文件里上次断点 + 1
+// Priority:
+//  1. --start explicitly passed by the user
+//  2. last_mainnet_block from the state file + 1
 //
-// 注意：**绝对不能**用私链 getnowblock + 1 作为起点。私链自己也在
-// 出块，head 是私链自己的计数，与主网块号无关；第一次启动必须由
-// 用户显式提供 --start（通常是 snapshot 裁剪时的最后一个主网块 + 1）。
+// IMPORTANT: never use the private chain's getnowblock + 1 as the start.
+// The private chain produces its own blocks, so its head is the private
+// chain's own counter — unrelated to mainnet's block number. On first
+// run the user MUST pass --start explicitly (typically the snapshot's
+// last mainnet block + 1).
 func (r *Replayer) resolveStartBlock(_ context.Context) (int64, error) {
     if r.cfg.Start > 0 {
         return r.cfg.Start, nil
@@ -108,25 +116,31 @@ func (r *Replayer) resolveStartBlock(_ context.Context) (int64, error) {
             "(or run with an existing state file from a previous run)")
 }
 
-// processBlock 处理单个主网块：拉取 → 按"槽"分批发送到私链。
+// processBlock handles a single mainnet block: fetch → split into per-second
+// slots → broadcast to the private chain.
 //
-// 节奏算法：
+// Pacing algorithm:
 //   - paceTotal = mainnetBlockSec / TpsMultiplier
-//     例：multiplier=1   → pace=3s
-//         multiplier=0.5 → pace=6s
-//         multiplier=1/3 → pace=9s
-//   - slots = max(1, floor(paceTotal / 1s))，每槽约 1 秒
-//     例：pace=3s → 3 槽；pace=9s → 9 槽；pace=1.5s → 1 槽
-//   - n 笔交易尽量均分到这些槽里：前 (n%slots) 个槽各 ceil(n/slots) 笔
-//   - 每个槽内交易**连续发送**无 sleep，整批完后等到该槽的绝对边界
-//   - 总定时器数：slots 次（典型 3-9 次），而非 n 次（典型 150 次）
+//     e.g. multiplier=1   → pace=3s
+//          multiplier=0.5 → pace=6s
+//          multiplier=1/3 → pace=9s
+//   - slots = max(1, floor(paceTotal / 1s)), ~1 second per slot
+//     e.g. pace=3s → 3 slots, pace=9s → 9 slots, pace=1.5s → 1 slot
+//   - n txs are spread across slots as evenly as possible: the first
+//     (n % slots) slots get one extra (ceil(n/slots)) tx.
+//   - Within a slot, txs are sent back-to-back with no sleep; after the
+//     batch we wait until the slot's absolute deadline.
+//   - Total timer invocations: `slots` (typically 3-9), not `n` (typically 150).
 //
-// 拉块失败仍等满 paceTotal 保持节奏；空块 / 区块不存在直接 return，
-// 不占整块时间，让重放更快推进。
+// On fetch failure we still wait for the full paceTotal to keep the
+// schedule steady. Empty blocks / non-existent blocks return immediately
+// without burning the full pace so replay advances faster.
 //
-// 返回 (blockOk, blockFail, blockSkip, err)。
-// err 非 nil 当且仅当：本块发起过广播 (attempted > 0) 但全部失败 (ok == 0)。
-// 此时调用方 (Run) 应当停服，避免在私链状态有问题时盲目推进 state。
+// Returns (blockOk, blockFail, blockSkip, err).
+// err is non-nil iff this block attempted broadcasts (attempted > 0) and
+// all of them failed (ok == 0). In that case the caller (Run) should
+// stop the service to avoid blindly advancing state while the private
+// chain is in a bad state.
 func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, int64, error) {
     blockStart := time.Now()
 
@@ -144,7 +158,7 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
     if err != nil {
         log.Printf("block %d fetch failed: %v", num, err)
         r.waitUntil(ctx, blockStart.Add(paceTotal))
-        return 0, 0, 0, nil // 拉块失败属于 TronGrid 侧问题，不算"全失败"，继续下一块
+        return 0, 0, 0, nil // fetch failure is a TronGrid-side issue; not "all-fail", continue
     }
     if blk == nil {
         log.Printf("block %d not found", num)
@@ -157,15 +171,16 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
         return 0, 0, 0, nil
     }
 
-    // 槽数约等于 paceTotal 的整数秒；slotDuration = paceTotal/slots
-    // 吸收小数秒余量，保证最后一个槽 deadline 恰好是 blockStart + paceTotal
+    // Slot count ~= paceTotal in integer seconds. slotDuration = paceTotal/slots
+    // absorbs any fractional remainder so the final slot's deadline lands
+    // exactly at blockStart + paceTotal.
     slots := int(paceTotal / time.Second)
     if slots < 1 {
         slots = 1
     }
     slotDuration := paceTotal / time.Duration(slots)
     baseSize := n / slots
-    remainder := n % slots // 前 remainder 个槽多分 1 笔
+    remainder := n % slots // the first `remainder` slots each get one extra tx
 
     idx := 0
     for s := 0; s < slots; s++ {
@@ -173,7 +188,7 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
         if s < remainder {
             size++
         }
-        // 本槽连续发送 size 笔（无 sleep）
+        // Send this slot's `size` txs back-to-back, no sleep between.
         for k := 0; k < size; k++ {
             select {
             case <-ctx.Done():
@@ -186,7 +201,7 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
             r.processTx(ctx, num, blk.Transactions[idx])
             idx++
         }
-        // 等到该槽的绝对边界（避免漂移）
+        // Wait until the slot's absolute boundary (avoids drift).
         target := blockStart.Add(slotDuration * time.Duration(s+1))
         r.waitUntil(ctx, target)
     }
@@ -195,8 +210,9 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
     blockFail := atomic.LoadInt64(&r.state.TotalBroadcastFail) - failBefore
     blockSkip := atomic.LoadInt64(&r.state.TotalSkipped) - skipBefore
 
-    // 广播试过 (blockFail > 0) 但全失败 (blockOk == 0) → 触发停服
-    // 跳过的（VoteWitness 等）不算在内，因为根本没尝试发出去
+    // If we attempted broadcasts (blockFail > 0) and all of them failed
+    // (blockOk == 0), trigger a shutdown. Skipped txs (VoteWitness etc.)
+    // are excluded because we never attempted to broadcast them.
     if ctx.Err() == nil && blockFail > 0 && blockOk == 0 {
         return blockOk, blockFail, blockSkip,
             fmt.Errorf("block %d: all %d broadcast attempts failed", num, blockFail)
@@ -204,7 +220,8 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
     return blockOk, blockFail, blockSkip, nil
 }
 
-// processTx 处理单笔交易：先过滤，过则广播。
+// processTx handles a single transaction: filter first; if it passes
+// the filter, broadcast it.
 func (r *Replayer) processTx(ctx context.Context, blockNum int64, tx json.RawMessage) {
     reason, peek := shouldSkip(tx, r.skipTypes)
     if reason != "" {
@@ -225,7 +242,8 @@ func (r *Replayer) processTx(ctx context.Context, blockNum int64, tx json.RawMes
     }
 }
 
-// waitUntil 阻塞直到 deadline 或 ctx 取消；已过时刻立刻返回。
+// waitUntil blocks until `deadline` or until ctx is cancelled. Returns
+// immediately if the deadline has already passed.
 func (r *Replayer) waitUntil(ctx context.Context, deadline time.Time) {
     d := time.Until(deadline)
     if d <= 0 {

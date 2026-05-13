@@ -13,13 +13,14 @@ import (
 
 const privateNodeTimeoutSec = 5
 
-// PrivateNodeClient 把主网交易转发给私链节点的 HTTP API。
+// PrivateNodeClient forwards mainnet transactions to the private chain
+// node's HTTP API.
 type PrivateNodeClient struct {
 	baseURL string
 	client  *http.Client
 }
 
-// broadcastResp 是 /wallet/broadcasttransaction 的响应结构。
+// broadcastResp is the response shape of /wallet/broadcasttransaction.
 type broadcastResp struct {
 	Result  bool   `json:"result"`
 	Code    string `json:"code"`
@@ -33,9 +34,12 @@ func newPrivateNodeClient(baseURL string) *PrivateNodeClient {
 	}
 }
 
-// broadcast 直接把主网 tx json 转发给私链，不做任何字段改写。
-// 返回 (success, message)。success=true 表示节点接受了交易；
-// 落块成功需 getTransactionInfoById 单独确认，本工具不做。
+// broadcast forwards a mainnet tx JSON to the private chain as-is,
+// without rewriting any fields.
+// Returns (success, message). success=true means the node accepted the
+// transaction into its pending pool; confirming the tx actually landed
+// in a block requires a separate getTransactionInfoById call, which
+// this tool does not perform.
 func (c *PrivateNodeClient) broadcast(ctx context.Context, tx json.RawMessage) (bool, string) {
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		c.baseURL+"/wallet/broadcasttransaction", bytes.NewReader(tx))
@@ -57,7 +61,7 @@ func (c *PrivateNodeClient) broadcast(ctx context.Context, tx json.RawMessage) (
 		return true, "OK"
 	}
 	msg := r.Message
-	// java-tron message 字段常是 hex-encoded，解一下提高可读性
+	// java-tron's message field is usually hex-encoded; decode for readability
 	if msg != "" {
 		if decoded, err := hex.DecodeString(msg); err == nil {
 			msg = string(decoded)

@@ -2,13 +2,15 @@ package main
 
 import "encoding/json"
 
-// defaultSkipContractTypes 列出默认跳过的合约类型。
+// defaultSkipContractTypes lists the contract types skipped by default.
 //
-// 这几类在重放路径上注定失败（参考 0.5.3 节）：
-//   - VoteWitness / WitnessUpdate / WitnessCreate：私链 witness 与主网不同
-//   - WithdrawBalance：投票奖励金额无法跟主网一致，会级联影响后续交易
+// These are guaranteed to fail when replayed on a private chain:
+//   - VoteWitness / WitnessUpdate / WitnessCreate: the private chain's
+//     witness set is different from mainnet's
+//   - WithdrawBalance: voting rewards don't match mainnet amounts, which
+//     cascades into subsequent balance-dependent transactions
 //
-// 用 --include-all 关闭此过滤。
+// Pass --include-all to disable this filter.
 var defaultSkipContractTypes = map[string]struct{}{
 	"VoteWitnessContract":     {},
 	"WitnessUpdateContract":   {},
@@ -16,7 +18,8 @@ var defaultSkipContractTypes = map[string]struct{}{
 	"WithdrawBalanceContract": {},
 }
 
-// txPeek 只解 txID + contract.type，避免把整个交易 unmarshal 一遍。
+// txPeek only decodes txID + contract.type, avoiding a full transaction
+// unmarshal when we only need to decide whether to skip.
 type txPeek struct {
 	TxID    string `json:"txID"`
 	RawData struct {
@@ -26,9 +29,10 @@ type txPeek struct {
 	} `json:"raw_data"`
 }
 
-// shouldSkip 返回跳过原因（空字符串表示不跳过）+ 解析出的 peek 信息。
+// shouldSkip returns the skip reason ("" = do not skip) plus the parsed
+// peek info.
 //
-// 调用方拿 peek 是为了写日志时附带 txID，避免再 unmarshal 一遍。
+// Callers use the peek to log the txID without unmarshaling again.
 func shouldSkip(tx json.RawMessage, skipTypes map[string]struct{}) (string, txPeek) {
 	var p txPeek
 	if err := json.Unmarshal(tx, &p); err != nil {

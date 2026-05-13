@@ -5,9 +5,10 @@ import (
 	"os"
 )
 
-// jsonlLogger 把每条记录序列化为一行 JSON 写入文件，append 模式。
+// jsonlLogger writes each record as one JSON line to a file in append mode.
 //
-// 故意保持简单（不带 buffer），方便用 tail -F 实时观察。
+// Deliberately kept simple (no buffering) so `tail -F` shows progress in
+// real time.
 type jsonlLogger struct {
 	f *os.File
 }

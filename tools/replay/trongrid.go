@@ -14,13 +14,14 @@ import (
 
 const (
 	trongridDefaultURL = "https://api.trongrid.io"
-	trongridDefaultQPS = 1 // 每秒拉一个区块够用（主网 3s 一块，3x 速度重放）
+	trongridDefaultQPS = 1 // 1 block/sec is plenty (mainnet produces a block every 3s; this is 3x replay)
 	trongridTimeoutSec = 10
 	retryMax           = 3
 	retryBackoffSec    = 2
 )
 
-// Block 仅解 number + 保留 transactions 原始 json，避免无谓的反序列化。
+// Block only decodes the block number and keeps the transactions as raw
+// JSON, avoiding an unnecessary deep unmarshal of every transaction.
 type Block struct {
 	BlockHeader struct {
 		RawData struct {
@@ -30,12 +31,12 @@ type Block struct {
 	Transactions []json.RawMessage `json:"transactions"`
 }
 
-// TronGridClient 封装对 TronGrid HTTP API 的访问，含内置速率限制。
+// TronGridClient wraps the TronGrid HTTP API with a built-in rate limiter.
 type TronGridClient struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
-	ticker  *time.Ticker // 速率限制：每 1/qps 秒放一个请求过去
+	ticker  *time.Ticker // rate limiter: lets one request through every 1/qps seconds
 }
 
 func newTronGridClient(baseURL, apiKey string, qps int) *TronGridClient {
@@ -51,7 +52,8 @@ func newTronGridClient(baseURL, apiKey string, qps int) *TronGridClient {
 	}
 }
 
-// post 是底层请求方法，统一过速率门 + 注入 API key。
+// post is the underlying request method; all calls go through the rate
+// limiter and the API key is injected here.
 func (c *TronGridClient) post(ctx context.Context, path string, body any) ([]byte, error) {
 	<-c.ticker.C
 	buf, err := json.Marshal(body)
@@ -78,7 +80,8 @@ func (c *TronGridClient) post(ctx context.Context, path string, body any) ([]byt
 	return io.ReadAll(resp.Body)
 }
 
-// getBlock 拉取指定高度区块，含重试 + 退避。返回 nil 表示区块不存在。
+// getBlock fetches the block at the given height with retry + backoff.
+// A nil return value (without error) means the block does not exist.
 func (c *TronGridClient) getBlock(ctx context.Context, num int64) (*Block, error) {
 	var lastErr error
 	for attempt := 0; attempt < retryMax; attempt++ {
@@ -89,7 +92,7 @@ func (c *TronGridClient) getBlock(ctx context.Context, num int64) (*Block, error
 			if jerr := json.Unmarshal(body, &blk); jerr != nil {
 				return nil, jerr
 			}
-			// 空响应 / 区块不存在
+			// empty response / block does not exist
 			if blk.BlockHeader.RawData.Number == 0 && len(blk.Transactions) == 0 {
 				return nil, nil
 			}
@@ -108,7 +111,7 @@ func (c *TronGridClient) getBlock(ctx context.Context, num int64) (*Block, error
 	return nil, lastErr
 }
 
-// getNowBlockNum 取主网当前最高块号。
+// getNowBlockNum returns the current mainnet head block number.
 func (c *TronGridClient) getNowBlockNum(ctx context.Context) (int64, error) {
 	body, err := c.post(ctx, "/wallet/getnowblock", map[string]any{})
 	if err != nil {
