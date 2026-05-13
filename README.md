@@ -574,6 +574,26 @@ remain at the repo root. `make sync-templates` re-fetches them from
 upstream into both the root and the CLI's embedded copy so the two stay
 in lockstep.
 
+## Companion Tools
+
+In addition to the `trond` CLI, this repo ships sibling Go tools under
+`tools/` for adjacent test/operations workflows. They build into separate
+binaries and have separate release tarballs.
+
+| Tool | Path | Purpose |
+|---|---|---|
+| **`replay`** | [`tools/replay/`](tools/replay/README.md) | Streams mainnet historical transactions from TronGrid HTTP API to a private chain. Pure-Go external HTTP client (no java-tron source dependency). Used for PQ test setup, stress harness, snapshot validation. |
+
+Build:
+
+```bash
+make build-replay        # → bin/replay
+make install-replay      # → $(GOBIN)/replay
+```
+
+Each tool ships as its own tarball (`replay_<version>_<os>_<arch>.tar.gz`)
+in releases, alongside the main `trond` tarball.
+
 ## Configuration Templates
 
 Base java-tron configuration templates rendered into per-node HOCON. The
