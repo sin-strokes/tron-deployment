@@ -110,16 +110,3 @@ func (c *TronGridClient) getBlock(ctx context.Context, num int64) (*Block, error
 	}
 	return nil, lastErr
 }
-
-// getNowBlockNum returns the current mainnet head block number.
-func (c *TronGridClient) getNowBlockNum(ctx context.Context) (int64, error) {
-	body, err := c.post(ctx, "/wallet/getnowblock", map[string]any{})
-	if err != nil {
-		return 0, err
-	}
-	var blk Block
-	if err := json.Unmarshal(body, &blk); err != nil {
-		return 0, err
-	}
-	return blk.BlockHeader.RawData.Number, nil
-}

@@ -97,6 +97,16 @@ func keysOf(m map[string]struct{}) []string {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Printf("error: %v", err)
+		os.Exit(1)
+	}
+}
+
+// run is the real entry point. It returns an error instead of calling
+// log.Fatalf so deferred cleanups (signal.NotifyContext restore, jsonl
+// loggers close, etc.) actually run before the process exits.
+func run() error {
 	cfg := parseArgs()
 
 	ctx, stop := signal.NotifyContext(context.Background(),
@@ -110,12 +120,12 @@ func main() {
 
 	failLog, err := openJsonlLogger(cfg.FailLog)
 	if err != nil {
-		log.Fatalf("open fail log: %v", err)
+		return fmt.Errorf("open fail log: %w", err)
 	}
 	defer failLog.Close()
 	skipLog, err := openJsonlLogger(cfg.SkipLog)
 	if err != nil {
-		log.Fatalf("open skip log: %v", err)
+		return fmt.Errorf("open skip log: %w", err)
 	}
 	defer skipLog.Close()
 
@@ -130,6 +140,7 @@ func main() {
 	}
 
 	if err := r.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatalf("run: %v", err)
+		return fmt.Errorf("run: %w", err)
 	}
+	return nil
 }

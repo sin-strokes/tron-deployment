@@ -150,6 +150,12 @@ nfpms:
 # path is still the cleaner UX for CLI tools.
 brews:
   - name: trond
+    # Scope to the trond archive only — the homebrew tap installs the
+    # main CLI, not the sibling replay tool. Without ids, goreleaser
+    # tries to package both archives under the same OS/Arch slot and
+    # errors with "one tap can handle only one archive".
+    ids:
+      - default
     repository:
       owner: tronprotocol
       name: homebrew-tap
