@@ -580,9 +580,9 @@ In addition to the `trond` CLI, this repo ships sibling Go tools under
 `tools/` for adjacent test/operations workflows. They build into separate
 binaries and have separate release tarballs.
 
-| Tool | Path | Purpose |
-|---|---|---|
-| **`replay`** | [`tools/replay/`](tools/replay/README.md) | Streams mainnet historical transactions from TronGrid HTTP API to a private chain. Pure-Go external HTTP client (no java-tron source dependency). Used for PQ test setup, stress harness, snapshot validation. |
+| Tool | Path | Purpose                                                                                                                                                                                                        |
+|---|---|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **`replay`** | [`tools/replay/`](tools/replay/README.md) | Streams mainnet historical transactions from TronGrid HTTP API to a private chain. Pure-Go external HTTP client (no java-tron source dependency). Used for testing setup, stress harness, snapshot validation. |
 
 Build:
 

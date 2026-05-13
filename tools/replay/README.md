@@ -342,15 +342,3 @@ Reasons that show up in `replay-failures.jsonl`:
 | Rate control | fixed `tpsLimit` | `tps-multiplier` derived from SR ratio |
 
 The reverse direction also holds: `stress_test` covers synthetic transaction generation (TRX / TRC10 / TRC20) and multi-target broadcast, which `replay` does not implement.
-
----
-
-## Roadmap
-
-Functionality on the near-term list:
-
-- **PQ tx re-signing** — strip mainnet ECDSA signatures and re-sign with Falcon-512 keys before broadcast. Required for replaying mainnet load against a PQ-upgraded private chain.
-- **Multi-target broadcast** — accept a list of private nodes and round-robin across them. Matches `stress_test`'s `broadcastUrl` list capability.
-- **Prometheus metrics** — expose block-level OK / fail / pace metrics for Grafana dashboards.
-- **Mainnet follow-head mode** — `--follow-head` to continuously catch up to mainnet's latest block (a lightweight shadow-fork-ish mode).
-- **Synthetic tx generation** — TRX / TRC10 / TRC20 / PQ tx templates, with optional blending of synthetic and replayed traffic. Parity with `stress_test`'s `generate` stage.
