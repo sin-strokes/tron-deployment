@@ -202,7 +202,7 @@ Use `--include-all` to forward them anyway — useful when observing failure mod
 --include-all        Do not skip Vote/Witness/Withdraw contracts
 ```
 
-State is flushed to `replay-state.json` after every block — no interval to configure.
+State is flushed to `replay-state.json` after **every transaction** so the resume point is precise to a single tx (covers SIGKILL / OOM / power-loss). Block completion does an atomic flush that advances `last_mainnet_block` and clears `in_progress_block` / `in_progress_tx_index` together — no grey state where txs were re-broadcast but the block counter hasn't moved.
 
 ---
 
@@ -249,13 +249,21 @@ data and should not be committed.
 
 ### `replay-state.json` — resume state
 
-Written after every block. `last_mainnet_block` is the **mainnet** block
-we've replayed up to, not the private chain head (the two diverge as soon
-as the private chain produces its own blocks).
+Written after every **transaction** for SIGKILL-grade resume precision.
+`last_mainnet_block` is the **mainnet** block we've replayed up to, not
+the private chain head (the two diverge as soon as the private chain
+produces its own blocks).
+
+`in_progress_block` and `in_progress_tx_index` are the per-tx checkpoint:
+both are `0` (or absent) when no block is in flight; non-zero
+`in_progress_block` means a previous run was killed midway and the next
+start will resume from `in_progress_tx_index` of that block.
 
 ```json
 {
   "last_mainnet_block": 82510650,
+  "in_progress_block": 82510651,
+  "in_progress_tx_index": 87,
   "total_fetched": 1234,
   "total_broadcast_ok": 1180,
   "total_broadcast_fail": 30,
@@ -305,7 +313,18 @@ jq -r .reason replay-skips.jsonl | sort | uniq -c
 
 ## Interrupt and resume
 
-Ctrl+C triggers a graceful shutdown: the current block finishes processing, state is flushed, and the program exits. Restart without `--start` to continue.
+All three interrupt scenarios resume cleanly. In every case, restart without `--start` and replay reads the state file automatically.
+
+| Scenario | State at interrupt | Resume point |
+|---|---|---|
+| `Ctrl+C` (SIGINT/SIGTERM) | Current tx finishes, state already flushed | The next tx in the in-progress block |
+| `kill -9` / OOM / power loss | State is flushed after every tx, so the most recent durable checkpoint is `in_progress_block` + `in_progress_tx_index` | `in_progress_tx_index` of `in_progress_block` (at most one tx may be re-broadcast → typically a single `DUP_TRANSACTION_ERROR` in the fail log) |
+| All-fail block aborts | `in_progress_block` preserved, `in_progress_tx_index` reset to `0` | After the operator fixes the underlying issue, replay restarts the aborted block from **tx 0** |
+
+How it works:
+- Every processed tx (broadcast / failed / skipped) flushes state, so the resume point is precise to a single tx.
+- Block completion is a single atomic flush that advances `last_mainnet_block` and clears `in_progress_*` together. There's no grey state where txs were re-broadcast but the block counter hasn't moved.
+- A resumed block sends the remaining txs back-to-back (the slot algorithm depends on the block-start wallclock, which is no longer meaningful after a restart). Pacing returns to normal at the next block.
 
 ---
 

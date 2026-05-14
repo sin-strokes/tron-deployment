@@ -68,6 +68,12 @@ func (r *Replayer) Run(ctx context.Context) error {
 		if err != nil {
 			// Don't advance LastMainnetBlock, but flush the cumulative
 			// counters so they're visible for post-mortem.
+			// Reset InProgressTxIndex to 0: an abort means "all broadcasts
+			// in this block failed". After the operator investigates and
+			// retries, we want to attempt the block from tx 0 again, not
+			// have the next start mistake InProgressTxIndex==n for
+			// "already completed" and skip the block entirely.
+			r.state.InProgressTxIndex = 0
 			if flushErr := r.flushState(); flushErr != nil {
 				log.Printf("save state failed: %v", flushErr)
 			}
@@ -76,7 +82,15 @@ func (r *Replayer) Run(ctx context.Context) error {
 				"check %s for failure details", r.state.LastMainnetBlock, n, r.cfg.FailLog)
 			return err
 		}
+		// One flush atomically clears the in-progress markers and advances
+		// LastMainnetBlock, so "block done" is a single atomic event. If a
+		// SIGKILL lands between the two writes, the next start enters
+		// processBlock with InProgressTxIndex already past the block's tx
+		// count and treats it as already completed — there's no grey state
+		// where txs were re-broadcast but LastMainnetBlock hasn't moved.
 		r.state.LastMainnetBlock = n
+		r.state.InProgressBlock = 0
+		r.state.InProgressTxIndex = 0
 		if err := r.flushState(); err != nil {
 			log.Printf("save state failed: %v", err)
 		}
@@ -107,6 +121,14 @@ func (r *Replayer) Run(ctx context.Context) error {
 func (r *Replayer) resolveStartBlock(_ context.Context) (int64, error) {
 	if r.cfg.Start > 0 {
 		return r.cfg.Start, nil
+	}
+	// SIGKILL / OOM mid-block: replay the in-progress block first,
+	// processBlock will resume from InProgressTxIndex without
+	// re-broadcasting txs that were already processed.
+	if r.state.InProgressBlock > 0 {
+		log.Printf("resume mid-block: block=%d tx_index=%d",
+			r.state.InProgressBlock, r.state.InProgressTxIndex)
+		return r.state.InProgressBlock, nil
 	}
 	if r.state.LastMainnetBlock > 0 {
 		return r.state.LastMainnetBlock + 1, nil
@@ -171,25 +193,38 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
 		return 0, 0, 0, nil
 	}
 
-	// Slot count ~= paceTotal in integer seconds. slotDuration = paceTotal/slots
-	// absorbs any fractional remainder so the final slot's deadline lands
-	// exactly at blockStart + paceTotal.
-	slots := int(paceTotal / time.Second)
-	if slots < 1 {
-		slots = 1
-	}
-	slotDuration := paceTotal / time.Duration(slots)
-	baseSize := n / slots
-	remainder := n % slots // the first `remainder` slots each get one extra tx
-
-	idx := 0
-	for s := 0; s < slots; s++ {
-		size := baseSize
-		if s < remainder {
-			size++
+	// Resume path: the previous run was killed partway through this block.
+	// Pick up from InProgressTxIndex. If the index already equals or exceeds
+	// the block's tx count, the previous run actually finished the block
+	// but didn't get a chance to advance LastMainnetBlock — treat it as
+	// completed (Run will advance LastMainnetBlock and clear in-progress).
+	startIdx := 0
+	resuming := r.state.InProgressBlock == num && r.state.InProgressTxIndex > 0
+	if resuming {
+		if r.state.InProgressTxIndex >= n {
+			log.Printf("block %d: state idx %d >= n=%d, treating as already completed",
+				num, r.state.InProgressTxIndex, n)
+			return 0, 0, 0, nil
 		}
-		// Send this slot's `size` txs back-to-back, no sleep between.
-		for k := 0; k < size; k++ {
+		startIdx = r.state.InProgressTxIndex
+		log.Printf("block %d: resuming from tx %d/%d", num, startIdx, n)
+	}
+
+	// Mark the block as in-progress; every processed tx below flushes the
+	// updated InProgressTxIndex.
+	r.state.InProgressBlock = num
+	r.state.InProgressTxIndex = startIdx
+	if err := r.flushState(); err != nil {
+		log.Printf("save state failed at block %d entry: %v", num, err)
+	}
+
+	// Resume path: skip the slot allocation and send the remaining txs
+	// back-to-back. The slot algorithm depends on blockStart wallclock
+	// time, which is no longer meaningful after a restart; trying to
+	// reconstruct it would only introduce drift. The next block returns
+	// to normal pacing automatically.
+	if resuming {
+		for idx := startIdx; idx < n; idx++ {
 			select {
 			case <-ctx.Done():
 				return atomic.LoadInt64(&r.state.TotalBroadcastOk) - okBefore,
@@ -199,11 +234,50 @@ func (r *Replayer) processBlock(ctx context.Context, num int64) (int64, int64, i
 			default:
 			}
 			r.processTx(ctx, num, blk.Transactions[idx])
-			idx++
+			r.state.InProgressTxIndex = idx + 1
+			if err := r.flushState(); err != nil {
+				log.Printf("save state failed at block %d tx %d: %v", num, idx, err)
+			}
 		}
-		// Wait until the slot's absolute boundary (avoids drift).
-		target := blockStart.Add(slotDuration * time.Duration(s+1))
-		r.waitUntil(ctx, target)
+	} else {
+		// Slot count ~= paceTotal in integer seconds. slotDuration = paceTotal/slots
+		// absorbs any fractional remainder so the final slot's deadline lands
+		// exactly at blockStart + paceTotal.
+		slots := int(paceTotal / time.Second)
+		if slots < 1 {
+			slots = 1
+		}
+		slotDuration := paceTotal / time.Duration(slots)
+		baseSize := n / slots
+		remainder := n % slots // the first `remainder` slots each get one extra tx
+
+		idx := 0
+		for s := 0; s < slots; s++ {
+			size := baseSize
+			if s < remainder {
+				size++
+			}
+			// Send this slot's `size` txs back-to-back, no sleep between.
+			for k := 0; k < size; k++ {
+				select {
+				case <-ctx.Done():
+					return atomic.LoadInt64(&r.state.TotalBroadcastOk) - okBefore,
+						atomic.LoadInt64(&r.state.TotalBroadcastFail) - failBefore,
+						atomic.LoadInt64(&r.state.TotalSkipped) - skipBefore,
+						nil
+				default:
+				}
+				r.processTx(ctx, num, blk.Transactions[idx])
+				idx++
+				r.state.InProgressTxIndex = idx
+				if err := r.flushState(); err != nil {
+					log.Printf("save state failed at block %d tx %d: %v", num, idx, err)
+				}
+			}
+			// Wait until the slot's absolute boundary (avoids drift).
+			target := blockStart.Add(slotDuration * time.Duration(s+1))
+			r.waitUntil(ctx, target)
+		}
 	}
 
 	blockOk := atomic.LoadInt64(&r.state.TotalBroadcastOk) - okBefore
