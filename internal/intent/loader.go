@@ -303,6 +303,29 @@ func Validate(intent *Intent) error {
 		}
 	}
 
+	// Build vs Image vs Jar mutual exclusion (spec/002 FR-005).
+	// `build:` produces the artifact; `image:` references a pre-built
+	// docker image; `jar:` fetches a pre-built JAR. A node may carry
+	// at most one source.
+	for i, n := range intent.Nodes {
+		sources := 0
+		if n.Build != nil {
+			sources++
+		}
+		if n.Image != "" {
+			sources++
+		}
+		if n.Jar != nil {
+			sources++
+		}
+		if sources > 1 {
+			return fmt.Errorf("nodes[%d]: build, image, jar are mutually exclusive — pick one source", i)
+		}
+		if n.Build != nil && n.Build.Artifact == "image" && n.Build.ImageTag == "" {
+			return fmt.Errorf("nodes[%d]: build.image_tag is required when build.artifact = image", i)
+		}
+	}
+
 	// Witness nodes need a key source. Accept either the legacy top-level
 	// witness_key_env shortcut or the structured witness_key block. Both
 	// values are validated to be ENV var names (not raw hex keys) so a

@@ -63,6 +63,22 @@
       "type": "string",
       "enum": ["docker", "jar"],
       "description": "Which runtime was selected based on intent.target.runtime."
+    },
+    "build": {
+      "type": "object",
+      "description": "Populated when the intent carried a `build:` block (spec/002). Slice of the full build.Result manifest with the fields a caller most often needs inline. The complete manifest stays under ~/.trond/builds/manifest/<cache_key>.json.",
+      "required": ["cache_key", "source_revision", "dirty", "cache_hit", "duration_ms"],
+      "properties": {
+        "cache_key":       { "type": "string", "pattern": "^[0-9a-f]{12}-b[0-9a-f]{8}(\\+dirty-[0-9a-f]{8})?(-x[0-9a-f]{8})?$" },
+        "source_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "dirty":           { "type": "boolean" },
+        "artifact_path":   { "type": "string" },
+        "image_tag":       { "type": "string" },
+        "sha256":          { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "cache_hit":       { "type": "boolean" },
+        "duration_ms":     { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

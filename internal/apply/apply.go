@@ -77,6 +77,12 @@ type Options struct {
 	// through to the docker container / systemd unit.
 	EnvVars map[string]string
 
+	// IntentPath is the on-disk path of the intent.yaml that produced
+	// Intent. Used to resolve `build.source: ./relative/path` against
+	// the intent file's directory per spec/002 FR-021. Optional when
+	// the intent has no `build:` block.
+	IntentPath string
+
 	// Wait + WaitTimeout: when Wait is true, Apply blocks until the
 	// node's HTTP API responds 2xx or WaitTimeout elapses. Wait
 	// failures don't roll the deploy back; they surface in
@@ -102,6 +108,27 @@ type Result struct {
 	Ready     *bool  `json:"ready,omitempty"`
 	WaitedMs  int64  `json:"waited_ms,omitempty"`
 	WaitError string `json:"wait_error,omitempty"`
+
+	// Build is populated when the intent carried a `build:` block.
+	// Matches the build.Result JSON shape (schemas/output/build.schema.json).
+	// Omitted from the result envelope when no build was needed
+	// (image or pre-built jar path).
+	Build *BuildSummary `json:"build,omitempty"`
+}
+
+// BuildSummary is the slice of build.Result the apply envelope
+// surfaces. The full per-build manifest stays under
+// ~/.trond/builds/manifest/<key>.json; this is what an agent sees
+// inline with `trond apply -o json`.
+type BuildSummary struct {
+	CacheKey       string `json:"cache_key"`
+	SourceRevision string `json:"source_revision"`
+	Dirty          bool   `json:"dirty"`
+	ArtifactPath   string `json:"artifact_path,omitempty"`
+	ImageTag       string `json:"image_tag,omitempty"`
+	SHA256         string `json:"sha256,omitempty"`
+	CacheHit       bool   `json:"cache_hit"`
+	DurationMs     int64  `json:"duration_ms"`
 }
 
 // Apply runs the deploy phase. Returns a Result on success or
@@ -147,6 +174,15 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 
 	node := &opts.Intent.Nodes[0]
 
+	// Resolve build before render. The artifact path it produces
+	// feeds into the systemd unit (jar runtime) or the compose
+	// image: field (docker runtime). Failures surface as structured
+	// errors and abort apply.
+	buildSummary, builtJarPath, builtImageTag, buildErr := resolveBuild(ctx, opts, node)
+	if buildErr != nil {
+		return nil, buildErr
+	}
+
 	hocon, err := render.RenderHOCON(opts.TemplateDir, opts.Intent, node)
 	if err != nil {
 		return nil, fmt.Errorf("render hocon: %w", err)
@@ -182,7 +218,10 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 			return nil, fmt.Errorf("docker deploy: %w", err)
 		}
 	case "jar":
-		deployOpts.SystemdData = []byte(render.RenderSystemdUnit(opts.Intent, node, jvmArgs, "", ""))
+		jarPath := builtJarPath // empty when node has no `build:` block
+		deployOpts.SystemdData = []byte(render.RenderSystemdUnit(opts.Intent, node, jvmArgs, jarPath, ""))
+		// JarPath still points at the install_path location for `mkdir -p` /
+		// config layout; only the systemd ExecStart references jarPath above.
 		deployOpts.JarPath = filepath.Join(node.InstallPath, "FullNode.jar")
 		if node.Jar != nil {
 			deployOpts.JarURL = node.Jar.URL
@@ -222,6 +261,9 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 		managed.PreviousVersion = opts.Existing.Version
 		outcome = "updated"
 	}
+	if buildSummary != nil {
+		managed.BuildCacheKey = buildSummary.CacheKey
+	}
 	opts.Store.UpsertNode(opts.State, managed)
 	if err := opts.Store.Save(opts.State); err != nil {
 		return nil, fmt.Errorf("save state: %w", err)
@@ -240,7 +282,9 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 			"grpc": fmt.Sprintf("127.0.0.1:%d", node.Ports.GRPC),
 		},
 		DurationMs: deployedMs,
+		Build:      buildSummary,
 	}
+	_ = builtImageTag // consumed by Phase 3 (docker runtime + image artifact)
 
 	if opts.Wait {
 		waitErr := WaitForReady(ctx, opts.Target, opts.Intent.Name, node.Ports.HTTP, opts.WaitTimeout)

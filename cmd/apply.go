@@ -110,6 +110,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		TemplateDir:    findTemplatesDir(),
 		DeploymentsDir: deploymentsDir(),
 		EnvVars:        resolveEnvVars(&parsed.Nodes[0]),
+		IntentPath:     applyIntentPath, // FR-021: relative build.source resolves vs this
 		Wait:           applyWait,
 		WaitTimeout:    applyWaitTimeout,
 	})
@@ -137,6 +138,9 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 	if res.ConfigHash != "" {
 		resultMap["config_hash"] = res.ConfigHash
+	}
+	if res.Build != nil {
+		resultMap["build"] = res.Build
 	}
 
 	writeAudit(auditEvent{

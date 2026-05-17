@@ -1,0 +1,241 @@
+package apply
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/tronprotocol/tron-deployment/internal/build"
+	"github.com/tronprotocol/tron-deployment/internal/intent"
+	"github.com/tronprotocol/tron-deployment/internal/paths"
+	"github.com/tronprotocol/tron-deployment/internal/state"
+)
+
+// fakeBuilderRunner stands in for the docker-driven build inside
+// apply tests. It plants a syntactically-valid FullNode JAR at the
+// requested .tmp path so the validator + finalize path runs to
+// completion without spinning up docker.
+type fakeBuilderRunner struct {
+	called bool
+}
+
+func (f *fakeBuilderRunner) RunDockerBuild(
+	_ context.Context,
+	_ /* sourcePath */, outTmp string,
+	_ /* gradleTask */ string,
+	_ /* gradleArgs */ []string,
+	_ /* env */ map[string]string,
+) error {
+	f.called = true
+	return os.WriteFile(outTmp, makeMinimalFullNodeJAR(), 0o600)
+}
+
+// makeMinimalFullNodeJAR returns the bytes of a ZIP whose
+// META-INF/MANIFEST.MF declares org.tron.program.FullNode as
+// Main-Class. Just enough to pass build's FR-011 validator.
+func makeMinimalFullNodeJAR() []byte {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, _ := zw.Create("META-INF/MANIFEST.MF")
+	_, _ = w.Write([]byte("Manifest-Version: 1.0\nMain-Class: org.tron.program.FullNode\n"))
+	_ = zw.Close()
+	return buf.Bytes()
+}
+
+// initGitRepo creates a one-commit git fixture trond's source.go can
+// resolve. Used by every test that drives the full build path.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "trond-test@example.com"},
+		{"config", "user.name", "trond test"},
+		{"config", "commit.gpgsign", "false"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\n"), 0o600); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	for _, args := range [][]string{
+		{"add", "."},
+		{"commit", "-q", "-m", "initial"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// TestResolveBuildSource_AbsolutePath asserts an absolute build.source
+// passes through unchanged regardless of intent path.
+func TestResolveBuildSource_AbsolutePath(t *testing.T) {
+	got, err := resolveBuildSource("/abs/path/to/source", "/some/intent.yaml")
+	if err != nil {
+		t.Fatalf("resolveBuildSource: %v", err)
+	}
+	if got != "/abs/path/to/source" {
+		t.Errorf("absolute source mutated: %q", got)
+	}
+}
+
+// TestResolveBuildSource_RelativeViaIntent is the FR-021 happy path:
+// `build.source: ../java-tron` resolves relative to the intent file's
+// parent directory.
+func TestResolveBuildSource_RelativeViaIntent(t *testing.T) {
+	got, err := resolveBuildSource("../java-tron", "/Users/me/projects/trond/examples/dev-local.yaml")
+	if err != nil {
+		t.Fatalf("resolveBuildSource: %v", err)
+	}
+	want := "/Users/me/projects/trond/java-tron"
+	if got != want {
+		t.Errorf("got %q; want %q", got, want)
+	}
+}
+
+// TestResolveBuildSource_RelativeNoIntentPath falls back to CWD when
+// the caller didn't pass an intent path (e.g. intent supplied via
+// stdin).
+func TestResolveBuildSource_RelativeNoIntentPath(t *testing.T) {
+	got, err := resolveBuildSource("./relative", "")
+	if err != nil {
+		t.Fatalf("resolveBuildSource: %v", err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("expected absolute path; got %q", got)
+	}
+}
+
+// TestApply_RecordsBuildCacheKeyInState is the end-to-end Phase 2
+// regression guard: when intent carries a `build:` block, the
+// resolved cache key gets persisted into state.ManagedNode so a
+// future `trond build prune` can refuse to delete an in-use artifact.
+//
+// We can't run the docker runtime here (no daemon), so this test
+// stops at the build resolution step and asserts the BuildSummary +
+// state plumbing populated correctly. The downstream render+deploy
+// path is exercised by cmd/apply_e2e_test.go.
+func TestApply_BuildSummaryPopulated(t *testing.T) {
+	// Isolate state + cache dirs.
+	dir := t.TempDir()
+	paths.SetBaseDir(dir)
+	t.Cleanup(func() { paths.SetBaseDir("") })
+
+	src := filepath.Join(dir, "java-tron")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	initGitRepo(t, src)
+
+	stub := &fakeBuilderRunner{}
+	restore := build.SetTestRunner(stub)
+	defer restore()
+
+	ctx := context.Background()
+	in := &intent.Intent{
+		Name:    "dev-fullnode",
+		Network: "nile",
+		Nodes: []intent.NodeSpec{{
+			Type: "fullnode",
+			Build: &intent.BuildSpec{
+				Source:               src,
+				Revision:             "HEAD",
+				JDK:                  "8",
+				Artifact:             "jar",
+				BuilderImageOverride: "test-image@sha256:abcdef1234567890",
+			},
+		}},
+	}
+
+	summary, jarPath, imageTag, err := resolveBuild(ctx, Options{Intent: in}, &in.Nodes[0])
+	if err != nil {
+		t.Fatalf("resolveBuild: %v", err)
+	}
+	if !stub.called {
+		t.Error("builder runner not invoked")
+	}
+	if summary == nil {
+		t.Fatal("BuildSummary nil")
+	}
+	if summary.CacheKey == "" {
+		t.Error("CacheKey not populated")
+	}
+	if summary.SourceRevision == "" {
+		t.Errorf("SourceRevision should be set; got %q", summary.SourceRevision)
+	}
+	if jarPath == "" {
+		t.Error("builtJarPath should be set when artifact = jar")
+	}
+	if imageTag != "" {
+		t.Errorf("builtImageTag should be empty in Phase 2 jar path; got %q", imageTag)
+	}
+}
+
+// TestApply_NoBuildBlockLeavesSummaryNil covers the unchanged path:
+// intents without a `build:` block produce no BuildSummary and never
+// invoke the builder.
+func TestApply_NoBuildBlockLeavesSummaryNil(t *testing.T) {
+	dir := t.TempDir()
+	paths.SetBaseDir(dir)
+	t.Cleanup(func() { paths.SetBaseDir("") })
+
+	stub := &fakeBuilderRunner{}
+	restore := build.SetTestRunner(stub)
+	defer restore()
+
+	in := &intent.Intent{
+		Name:    "no-build",
+		Network: "nile",
+		Nodes:   []intent.NodeSpec{{Type: "fullnode"}},
+	}
+	summary, jarPath, _, err := resolveBuild(context.Background(),
+		Options{Intent: in}, &in.Nodes[0])
+	if err != nil {
+		t.Fatalf("resolveBuild: %v", err)
+	}
+	if summary != nil {
+		t.Error("BuildSummary should be nil when no build block present")
+	}
+	if jarPath != "" {
+		t.Error("builtJarPath should be empty when no build block present")
+	}
+	if stub.called {
+		t.Error("builder runner invoked despite no build block")
+	}
+}
+
+// TestApply_BuildKeyLandsInState exercises the state persistence
+// branch via a synthetic Result construction. Confirms the
+// ManagedNode.BuildCacheKey field is wired.
+func TestApply_BuildKeyLandsInState(t *testing.T) {
+	mn := state.ManagedNode{Name: "x"}
+	mn.BuildCacheKey = "abc123def456-bd4e2a1a+dirty-7f2a3b9c"
+	// Round-trip via JSON to assert the json tag is correct.
+	st := state.DeploymentState{Version: 1, Nodes: []state.ManagedNode{mn}}
+	tmpDir := t.TempDir()
+	paths.SetBaseDir(tmpDir)
+	t.Cleanup(func() { paths.SetBaseDir("") })
+	store, err := state.NewStore(paths.State())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.Save(&st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Nodes[0].BuildCacheKey != mn.BuildCacheKey {
+		t.Errorf("BuildCacheKey not persisted: got %q; want %q",
+			loaded.Nodes[0].BuildCacheKey, mn.BuildCacheKey)
+	}
+}

@@ -132,6 +132,83 @@ type NodeSpec struct {
 	// flows but breaks first-time provisioning. Only consulted when the
 	// target's runtime is "jar".
 	Jar *JarSource `yaml:"jar,omitempty" json:"jar,omitempty"`
+
+	// Build, when present, makes trond produce the deploy artifact
+	// itself from a local java-tron source tree, instead of pulling a
+	// pre-built Image / Jar. Mutually exclusive with `image:` and
+	// `jar:` — the deploy artifact has exactly one source. The full
+	// design is in specs/002-trond-build-pipeline/. Phase 2 wires this
+	// into apply; Phase 3 adds artifact=image; Phase 4 adds SSH
+	// targets.
+	Build *BuildSpec `yaml:"build,omitempty" json:"build,omitempty"`
+}
+
+// BuildSpec describes how to produce a deploy artifact from a local
+// java-tron source tree. See specs/002-trond-build-pipeline/spec.md
+// for the field-level semantics. The validator + apply pipeline
+// reject any combination where `build:` coexists with `image:` or
+// `jar:` on the same node.
+//
+// Defaults applied at load time:
+//   - JDK: "8"
+//   - Artifact: "jar"
+//   - Builder: "docker"
+//   - Revision: "HEAD"
+//   - GradleTask: derived from Artifact ("shadowJar" for jar,
+//     "dockerBuild" for image; spec FR-001 lets users override).
+type BuildSpec struct {
+	// Source is the path to the java-tron source tree. Per FR-021,
+	// relative paths resolve against the intent file's directory
+	// (matches docker-compose's build.context convention). The CLI
+	// `--source` flag resolves against CWD instead; loader.go applies
+	// the intent-side rule before validation runs.
+	Source string `yaml:"source" json:"source" validate:"required,safe_string"`
+
+	// Revision selects which git revision to build. "HEAD" (default)
+	// honors dirty working-tree state and folds it into the cache key
+	// (FR-002). Branch/tag/sha values resolve to that exact commit
+	// and ignore dirty state.
+	Revision string `yaml:"revision,omitempty" json:"revision,omitempty" validate:"omitempty,safe_string"`
+
+	// JDK selects the builder container's JDK version. The pinned
+	// digest is resolved at apply time from internal/build/pins/.
+	JDK string `yaml:"jdk,omitempty" json:"jdk,omitempty" validate:"omitempty,oneof=8 11 17 21"`
+
+	// Artifact selects what to produce. Phase 2 supports only "jar";
+	// "image" is Phase 3.
+	Artifact string `yaml:"artifact,omitempty" json:"artifact,omitempty" validate:"omitempty,oneof=jar image"`
+
+	// ImageTag is the local Docker tag applied when Artifact=image
+	// (validated against Docker reference format at apply time per
+	// FR-005). Required when Artifact=image.
+	ImageTag string `yaml:"image_tag,omitempty" json:"image_tag,omitempty" validate:"omitempty,safe_string"`
+
+	// Builder picks between the containerized builder (default) and
+	// the host's local gradle. Phase 5 implements --builder host.
+	Builder string `yaml:"builder,omitempty" json:"builder,omitempty" validate:"omitempty,oneof=docker host"`
+
+	// GradleTask overrides the default gradle task name. Sensible
+	// defaults are derived from Artifact (jar → shadowJar, image →
+	// dockerBuild). Token-regex-validated at apply time per FR-022.
+	GradleTask string `yaml:"gradle_task,omitempty" json:"gradle_task,omitempty" validate:"omitempty,safe_string"`
+
+	// GradleArgs are extra arguments forwarded to gradle. Restricted
+	// by the flag-name allowlist in internal/build (FR-022): things
+	// like `--offline`, `-D<k>=<v>`, `-P<k>=<v>` pass; `--init-script`
+	// and similar do not.
+	GradleArgs []string `yaml:"gradle_args,omitempty" json:"gradle_args,omitempty"`
+
+	// BuilderImageOverride bypasses the embedded pin for `JDK`. Escape
+	// hatch — use when the pinned digest becomes unreachable. The
+	// override value participates in the cache key (FR-024) so pinned
+	// and overridden builds don't collide.
+	BuilderImageOverride string `yaml:"builder_image_override,omitempty" json:"builder_image_override,omitempty" validate:"omitempty,safe_string"`
+
+	// Env is a passthrough map for the build container. The keys are
+	// restricted to the FR-019 allowlist (GRADLE_OPTS, JAVA_OPTS,
+	// GRADLE_USER_HOME, MAVEN_OPTS, ORG_GRADLE_PROJECT_*). Values are
+	// shell-safe under argv (FR-022).
+	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 }
 
 // JarSource tells trond where (and how) to fetch the java-tron jar for a
