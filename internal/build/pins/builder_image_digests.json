@@ -1,0 +1,26 @@
+{
+  "$comment": "Pinned digests for builder images. Bumped per trond release via `make refresh-builder-pins`. Each entry resolves jdk_version -> reference (canonical name@sha256:...). Cache key (FR-002) incorporates the digest so pin bumps invalidate stale artifacts.",
+  "schema_version": "1.0.0",
+  "pins": {
+    "8": {
+      "ref": "eclipse-temurin:8-jdk-jammy",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "$comment": "PLACEHOLDER — refresh via `make refresh-builder-pins` before first real build"
+    },
+    "11": {
+      "ref": "eclipse-temurin:11-jdk-jammy",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "$comment": "PLACEHOLDER"
+    },
+    "17": {
+      "ref": "eclipse-temurin:17-jdk-jammy",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "$comment": "PLACEHOLDER"
+    },
+    "21": {
+      "ref": "eclipse-temurin:21-jdk-jammy",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "$comment": "PLACEHOLDER"
+    }
+  }
+}

@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.2.0",
+  "schema_version": "1.3.0",
   "entries": [
     {
       "name": "apply",
@@ -8,6 +8,10 @@
     {
       "name": "auto-heal",
       "hash": "1a1108e340bf94c7d568f27245183245fce793e3527383159c33f951adbbd00e"
+    },
+    {
+      "name": "build",
+      "hash": "fa4a163837651735689a38cd8513b5628a48edc896e3817d5d0fbbb90ee60c90"
     },
     {
       "name": "config-diff",
