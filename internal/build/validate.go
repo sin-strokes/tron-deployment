@@ -145,17 +145,12 @@ func ValidateJARMainClass(path, expected string) error {
 	if err != nil {
 		return fmt.Errorf("open jar: %w", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	for _, f := range r.File {
 		if f.Name != "META-INF/MANIFEST.MF" {
 			continue
 		}
-		rc, err := f.Open()
-		if err != nil {
-			return fmt.Errorf("read manifest: %w", err)
-		}
-		defer rc.Close()
-		got, err := scanManifestMainClass(rc)
+		got, err := readManifestMainClass(f)
 		if err != nil {
 			return err
 		}
@@ -165,6 +160,18 @@ func ValidateJARMainClass(path, expected string) error {
 		return nil
 	}
 	return fmt.Errorf("jar has no META-INF/MANIFEST.MF")
+}
+
+// readManifestMainClass scopes the open+close to one function call so
+// the linter sees a clean defer rather than `defer` inside the for
+// loop (deferInLoop) of the caller.
+func readManifestMainClass(f *zip.File) (string, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return "", fmt.Errorf("read manifest: %w", err)
+	}
+	defer func() { _ = rc.Close() }()
+	return scanManifestMainClass(rc)
 }
 
 // scanManifestMainClass extracts the Main-Class value from a JAR

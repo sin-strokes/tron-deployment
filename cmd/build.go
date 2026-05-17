@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -115,18 +114,15 @@ func runBuild(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	outputFmt, _ := cmd.Flags().GetString("output")
-
 	res, err := build.Run(ctx, req)
 	if err != nil {
-		var se *output.StructuredError
-		if errors.As(err, &se) {
-			output.WriteError(os.Stderr, se, outputFmt)
-			os.Exit(se.ExitCode)
-		}
+		// StructuredError propagates through cobra RunE; cmd.Execute
+		// renders it and sets the exit code (see cmd/root.go::Execute).
+		// Returning here lets `defer cancel()` run normally.
 		return err
 	}
 
+	outputFmt, _ := cmd.Flags().GetString("output")
 	if outputFmt == "json" {
 		return output.WriteJSON(os.Stdout, res)
 	}

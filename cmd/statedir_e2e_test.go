@@ -36,8 +36,8 @@ func TestE2E_StateDirPriority(t *testing.T) {
 		wantNot  []string
 	}{
 		{
-			name:    "flag-beats-env",
-			args:    []string{"--state-dir", flagDir},
+			name: "flag-beats-env",
+			args: []string{"--state-dir", flagDir},
 			extraEnv: []string{
 				"TROND_STATE_DIR=" + envDir,
 			},

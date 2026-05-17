@@ -117,9 +117,9 @@ func TestValidateImageTag(t *testing.T) {
 		{"UPPER:case", false},
 		{"foo bar:baz", false},
 		{"foo:bar baz", false},
-		{"foo", false},   // missing tag
-		{"foo:", false},  // empty tag
-		{":bar", false},  // empty repo
+		{"foo", false},  // missing tag
+		{"foo:", false}, // empty tag
+		{":bar", false}, // empty repo
 	}
 	for _, tc := range tests {
 		t.Run(tc.tag, func(t *testing.T) {

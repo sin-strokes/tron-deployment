@@ -18,9 +18,9 @@ import (
 // GradleArgs (also pass 2) means `--offline` builds don't collide
 // with networked builds.
 type CacheKey struct {
-	GitRevision        string   // full sha
-	PatchHash          string   // sha256 hex if dirty, else ""
-	BuilderImageDigest string   // "sha256:abc..." or override ref
+	GitRevision        string // full sha
+	PatchHash          string // sha256 hex if dirty, else ""
+	BuilderImageDigest string // "sha256:abc..." or override ref
 	JDKVersion         string
 	ArtifactKind       string // "jar" | "image"
 	GradleTask         string

@@ -20,10 +20,10 @@ type recordingRunner struct {
 	resolved *resolved
 	outTmp   string
 	// behavior knobs:
-	plantArtifact   string // if non-empty, write this content as the .tmp on Run
-	returnErr       error
-	delayBeforeRun  time.Duration
-	respectCancel   bool
+	plantArtifact  string // if non-empty, write this content as the .tmp on Run
+	returnErr      error
+	delayBeforeRun time.Duration
+	respectCancel  bool
 }
 
 func (r *recordingRunner) RunDockerBuild(ctx context.Context, res *resolved, outDir, outTmp string) error {

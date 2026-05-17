@@ -12,24 +12,24 @@ import (
 //
 // Output schema: schemas/output/build.schema.json.
 type Manifest struct {
-	CacheKey         string    `json:"cache_key"`
-	SourcePath       string    `json:"source_path"`
-	SourceRevision   string    `json:"source_revision"`
-	PatchHash        string    `json:"patch_hash,omitempty"`
-	Dirty            bool      `json:"dirty"`
-	BuilderImage     string    `json:"builder_image"`
-	BuilderImageDigest string  `json:"builder_image_digest"`
-	JDKVersion       string    `json:"jdk_version"`
-	ArtifactKind     string    `json:"artifact_kind"` // "jar" | "image"
-	ArtifactPath     string    `json:"artifact_path,omitempty"` // for jar
-	ImageTag         string    `json:"image_tag,omitempty"`     // for image
-	ImageID          string    `json:"image_id,omitempty"`      // for image
-	SHA256           string    `json:"sha256,omitempty"`        // for jar
-	GradleTask       string    `json:"gradle_task"`
-	GradleArgs       []string  `json:"gradle_args,omitempty"`
-	Builder          string    `json:"builder"` // "docker" | "host"
-	DurationMs       int64     `json:"duration_ms"`
-	CreatedAt        time.Time `json:"created_at"`
+	CacheKey           string    `json:"cache_key"`
+	SourcePath         string    `json:"source_path"`
+	SourceRevision     string    `json:"source_revision"`
+	PatchHash          string    `json:"patch_hash,omitempty"`
+	Dirty              bool      `json:"dirty"`
+	BuilderImage       string    `json:"builder_image"`
+	BuilderImageDigest string    `json:"builder_image_digest"`
+	JDKVersion         string    `json:"jdk_version"`
+	ArtifactKind       string    `json:"artifact_kind"`           // "jar" | "image"
+	ArtifactPath       string    `json:"artifact_path,omitempty"` // for jar
+	ImageTag           string    `json:"image_tag,omitempty"`     // for image
+	ImageID            string    `json:"image_id,omitempty"`      // for image
+	SHA256             string    `json:"sha256,omitempty"`        // for jar
+	GradleTask         string    `json:"gradle_task"`
+	GradleArgs         []string  `json:"gradle_args,omitempty"`
+	Builder            string    `json:"builder"` // "docker" | "host"
+	DurationMs         int64     `json:"duration_ms"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 // CacheHit is the body returned to callers when a previous build
