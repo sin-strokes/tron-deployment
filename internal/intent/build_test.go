@@ -105,6 +105,77 @@ nodes:
 	}
 }
 
+// TestParse_BuildAppliesDefaults is the regression guard for the
+// review-pass-2 fix that taught ApplyDefaults to fill BuildSpec
+// fields at intent-load time so `config validate --explain` and
+// downstream consumers see canonical values. Build's own
+// withDefaults() still owns the source of truth; the two stay in
+// lockstep via this test.
+func TestParse_BuildAppliesDefaults(t *testing.T) {
+	// Minimal build block — only source provided.
+	data := []byte(`
+name: dev-fullnode
+network: nile
+target:
+  type: local
+  runtime: jar
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if i.Nodes[0].Build == nil {
+		t.Fatal("Build block missing post-parse")
+	}
+	b := i.Nodes[0].Build
+	if b.Revision != "HEAD" {
+		t.Errorf("Revision default = %q; want HEAD", b.Revision)
+	}
+	if b.JDK != "8" {
+		t.Errorf("JDK default = %q; want 8", b.JDK)
+	}
+	if b.Artifact != "jar" {
+		t.Errorf("Artifact default = %q; want jar", b.Artifact)
+	}
+	if b.Builder != "docker" {
+		t.Errorf("Builder default = %q; want docker", b.Builder)
+	}
+	if b.GradleTask != "shadowJar" {
+		t.Errorf("GradleTask default = %q; want shadowJar (artifact=jar)", b.GradleTask)
+	}
+}
+
+// TestParse_BuildSuppressesImageDefault asserts the
+// applyNodeDefaults change: when Build is present, the legacy
+// Image default ("tronprotocol/java-tron") MUST be suppressed.
+// Otherwise the intent ends up with both Build AND Image set
+// post-defaults — violating the mutex and risking a docker compose
+// rendering an unintended image: field.
+func TestParse_BuildSuppressesImageDefault(t *testing.T) {
+	data := []byte(`
+name: dev-fullnode
+network: nile
+target:
+  type: local
+  runtime: jar
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if i.Nodes[0].Image != "" {
+		t.Errorf("Image should remain empty when Build is set; got %q", i.Nodes[0].Image)
+	}
+}
+
 // TestParse_BuildInvalidJDK pins the validator-tag enum.
 func TestParse_BuildInvalidJDK(t *testing.T) {
 	data := []byte(`

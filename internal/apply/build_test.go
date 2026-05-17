@@ -371,12 +371,158 @@ func TestApply_DirtySourceTriggersRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Apply: %v", err)
 	}
-	// Source changed → build cache key MUST differ → MUST NOT no-op.
-	if res2.Outcome == "no_change" {
-		t.Fatal("dirty source change was silently ignored — Phase 2 dev-loop bug regressed")
+	// Source changed → build cache key MUST differ → outcome MUST be
+	// the `updated` path, not no_change. Precise assertion (not just
+	// !no_change) so a future bug that drops outcome entirely would
+	// also trip this guard.
+	if res2.Outcome != "updated" {
+		t.Fatalf("dirty source should trigger updated; got %q (Phase 2 dev-loop bug regressed?)", res2.Outcome)
 	}
 	if res2.Build.CacheKey == res1.Build.CacheKey {
 		t.Error("dirty source did not produce a new cache key")
+	}
+}
+
+// TestApply_CleanCacheHitNoChange is the matched pair to
+// TestApply_DirtySourceTriggersRebuild: with the source tree
+// unchanged AND intent unchanged, a second Apply MUST short-circuit
+// as no_change and surface CacheHit=true in the build summary. This
+// pins the OTHER half of the new idempotency gate.
+func TestApply_CleanCacheHitNoChange(t *testing.T) {
+	dir := t.TempDir()
+	paths.SetBaseDir(dir)
+	t.Cleanup(func() { paths.SetBaseDir("") })
+
+	src := filepath.Join(dir, "java-tron")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	initGitRepo(t, src)
+
+	restore := build.SetTestRunner(&fakeBuilderRunner{})
+	defer restore()
+
+	in := &intent.Intent{
+		Name:    "dev-node",
+		Network: "nile",
+		Target:  intent.Target{Type: "local", Runtime: "jar"},
+		Nodes: []intent.NodeSpec{{
+			Type:        "fullnode",
+			Version:     "4.8.1",
+			Resources:   intent.Resources{Memory: "4G"},
+			Ports:       intent.PortMapping{HTTP: 8090, GRPC: 50051},
+			InstallPath: filepath.Join(dir, "install"),
+			Build: &intent.BuildSpec{
+				Source:               src,
+				Revision:             "HEAD",
+				JDK:                  "8",
+				Artifact:             "jar",
+				BuilderImageOverride: "test-image@sha256:abcdef1234567890",
+			},
+		}},
+	}
+
+	store, st := freshStore(t)
+	res1, err := Apply(context.Background(), Options{
+		Intent:         in,
+		Target:         &fakeTarget{},
+		Store:          store,
+		State:          st,
+		IntentHash:     "stable-hash",
+		TemplateDir:    "",
+		DeploymentsDir: filepath.Join(dir, "deployments"),
+	})
+	if err != nil {
+		t.Fatalf("first Apply: %v", err)
+	}
+
+	existing := state.ManagedNode{
+		Name:          in.Name,
+		IntentHash:    "stable-hash",
+		BuildCacheKey: res1.Build.CacheKey,
+		ConfigHash:    res1.ConfigHash,
+		Version:       res1.Version,
+		Runtime:       "jar",
+	}
+	res2, err := Apply(context.Background(), Options{
+		Intent:         in,
+		Target:         &fakeTarget{},
+		Store:          store,
+		State:          st,
+		IntentHash:     "stable-hash",
+		Existing:       &existing,
+		TemplateDir:    "",
+		DeploymentsDir: filepath.Join(dir, "deployments"),
+	})
+	if err != nil {
+		t.Fatalf("second Apply: %v", err)
+	}
+
+	if res2.Outcome != "no_change" {
+		t.Errorf("clean repeat apply should be no_change; got %q", res2.Outcome)
+	}
+	if res2.Build == nil {
+		t.Fatal("no_change result must still carry the Build summary")
+	}
+	if !res2.Build.CacheHit {
+		t.Error("Build.CacheHit should be true on cache-hit no-op path")
+	}
+	if res2.Build.CacheKey != res1.Build.CacheKey {
+		t.Errorf("cache key drift: %q vs %q", res2.Build.CacheKey, res1.Build.CacheKey)
+	}
+}
+
+// TestApply_RuntimeMustMatchArtifact pins the Phase 2 limitation
+// surfaced in self-review: `runtime: docker` with `build:` (default
+// artifact=jar) would render a compose with empty `image:` field
+// because the Image default is suppressed when Build is set.
+// validateOptions rejects this until Phase 3 wires artifact=image
+// into the docker render path.
+func TestApply_RuntimeMustMatchArtifact(t *testing.T) {
+	cases := []struct {
+		name     string
+		runtime  string
+		artifact string
+		wantErr  bool
+	}{
+		{"docker+jar rejected", "docker", "jar", true},
+		{"jar+image rejected", "jar", "image", true},
+		{"jar+jar accepted", "jar", "jar", false},
+		// docker+image: would be accepted by validateOptions, but
+		// Run() rejects with NOT_IMPLEMENTED in Phase 2 (build.go).
+		// Test that limit elsewhere; this test is the validate gate.
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := &intent.Intent{
+				Name:    "x",
+				Network: "nile",
+				Target:  intent.Target{Type: "local", Runtime: tc.runtime},
+				Nodes: []intent.NodeSpec{{
+					Type: "fullnode",
+					Build: &intent.BuildSpec{
+						Source:   "/tmp/x",
+						Artifact: tc.artifact,
+						ImageTag: "trond-test:dev", // placate the artifact=image required check
+					},
+				}},
+			}
+			store, st := freshStore(t)
+			// Test validateOptions directly — we only care about
+			// the gate decision, not the downstream build resolution
+			// (which would otherwise need a real git repo).
+			err := validateOptions(Options{
+				Intent:     in,
+				Target:     &fakeTarget{},
+				Store:      store,
+				State:      st,
+				IntentHash: "doesnt-matter",
+			})
+			got := err != nil
+			if got != tc.wantErr {
+				t.Errorf("err = %v (got=%v); wantErr=%v", err, got, tc.wantErr)
+			}
+		})
 	}
 }
 

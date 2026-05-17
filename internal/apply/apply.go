@@ -335,6 +335,29 @@ func validateOptions(o Options) error {
 	if sources > 1 {
 		return fmt.Errorf("node %q: build, image, jar are mutually exclusive (pick one artifact source)", n.Type)
 	}
+
+	// Phase 2 only wires artifact=jar end-to-end. The artifact_kind
+	// must match the runtime, otherwise we'd render a docker compose
+	// with `image: ""` (because the Image default is suppressed when
+	// Build is present) or a systemd unit pointing at a non-existent
+	// JAR. Reject the mismatch up-front. Phase 3 lifts this when
+	// the docker runtime learns to consume artifact=image.
+	if n.Build != nil {
+		rt := o.Intent.Target.Runtime
+		if rt == "" {
+			rt = "docker"
+		}
+		artifact := n.Build.Artifact
+		if artifact == "" {
+			artifact = "jar"
+		}
+		switch {
+		case rt == "docker" && artifact == "jar":
+			return fmt.Errorf("node %q: target.runtime=docker requires build.artifact=image (Phase 3 work); use target.runtime=jar for now", n.Type)
+		case rt == "jar" && artifact == "image":
+			return fmt.Errorf("node %q: target.runtime=jar cannot consume build.artifact=image — set build.artifact=jar or switch runtime", n.Type)
+		}
+	}
 	return nil
 }
 
@@ -345,6 +368,11 @@ func validateOptions(o Options) error {
 // build-aware short-circuit. Threading buildSummary keeps the result
 // consistent regardless of which gate fired — agents always see
 // the same shape.
+//
+// PRECONDITION: opts.Existing must be non-nil. Both callers (the
+// pre-build no_change gate and the build-aware gate) check this
+// before invoking — the helper itself trusts the contract to keep
+// the body straight-line.
 func noChangeResult(opts Options, buildSummary *BuildSummary, start time.Time) *Result {
 	ports := opts.Intent.Nodes[0].Ports
 	return &Result{

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -115,6 +116,15 @@ func runApply(cmd *cobra.Command, args []string) error {
 		WaitTimeout:    applyWaitTimeout,
 	})
 	if err != nil {
+		// Build pipeline and other internal layers already produce
+		// structured errors with the right error_code (BUILD_FAILED,
+		// INVALID_SOURCE, BUILD_CANCELLED, INVALID_ARTIFACT, etc.).
+		// Wrapping those in DEPLOY_ERROR would strip the specificity
+		// agents rely on.
+		var se *output.StructuredError
+		if errors.As(err, &se) {
+			return se
+		}
 		return exitWithError("DEPLOY_ERROR", output.ExitGeneralError, err.Error(),
 			"Check Docker is running: docker info",
 			"Check port availability")
