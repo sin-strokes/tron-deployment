@@ -164,13 +164,41 @@ Example: `8f4e2a-bd4e2a1+dirty-7f2a3b9c.jar` reads as
 
 ### Concurrent build serialization (FR-015)
 
+POSIX path (Linux / macOS) uses `syscall.Flock`. Windows ships a
+no-cross-process fallback (in-process `sync.Mutex` only) — concurrent
+`trond build` from two trond processes on Windows is undefined and
+documented as such. Split via build constraints:
+
+```
+internal/build/lock_posix.go    // //go:build !windows
+internal/build/lock_windows.go  // //go:build windows
+```
+
+POSIX implementation:
+
+```go
+//go:build !windows
+
+func acquireBuildLock(cacheDir, key string) (release func(), err error) {
+    lockPath := filepath.Join(cacheDir, "locks", key+".lock")
+    f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+    if err != nil { return nil, err }
+    if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+        f.Close()
+        return nil, err
+    }
+    return func() {
+        syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+        f.Close()
+    }, nil
+}
+```
+
 ```go
 // before any expensive work
-lockPath := filepath.Join(cacheDir, "locks", key.String()+".lock")
-f, _ := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
-defer f.Close()
-syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+release, err := acquireBuildLock(cacheDir, key.String())
+if err != nil { return errResult(err) }
+defer release()
 
 // re-check cache after acquiring lock
 if hit := cacheLookup(key); hit != nil {
@@ -233,14 +261,33 @@ guardrails (FR-022):
        fmt.Sprintf("docker run ... %s && cp ...", task))
    ```
 
-2. **Token-regex validation at parse time**. `gradle_task` and each
-   `gradle_arg` MUST match `^[a-zA-Z0-9._:=/+-]+$`. Names like
-   `shadowJar`, `:dbfork:build`, `-Dorg.gradle.daemon=false`,
-   `--offline`, `-Pversion=1.2.3` all pass. Anything with whitespace,
-   semicolons, redirection, backticks, `$()`, or quotes is rejected as
-   `VALIDATION_ERROR` before docker is even invoked.
+2. **`gradle_task`: char regex.** Task names are inherently regular —
+   `shadowJar`, `:dbfork:build`, `assemble`. Validated as
+   `^[a-zA-Z][a-zA-Z0-9:_-]*$`.
 
-The same gate guards `build.env` values (FR-019 allowlist).
+3. **`gradle_args`: flag-name allowlist** (not a character class).
+   The character regex from pass 2 was the wrong defense: it rejected
+   legitimate args (`--projects=a,b,c` has `,`; `-Dtitle=my title` has
+   spaces) AND let dangerous flags through (`--init-script
+   /tmp/evil.gradle` is all-ASCII-and-slashes). Since argv form already
+   blocks shell injection, the remaining concern is which gradle flags
+   are dangerous.
+
+   Allowed flags (whole arg matches):
+   - `--offline`, `--no-daemon`, `--parallel`, `--rerun-tasks`
+   - `--max-workers=<int>`
+   - `-D<key>=<val>`, `-P<key>=<val>` (value unrestricted, argv-safe)
+   - `-q`, `-i`, `-d` (log levels)
+
+   Rejected flags (allowlist miss):
+   - `--init-script`, `--include-build`, `--build-file`,
+     `--settings-file` — these redirect the build to attacker-supplied
+     logic.
+   - Anything else not listed.
+
+   Extending the allowlist is a code change, not an intent change.
+
+The same gate guards `build.env` keys (FR-019 allowlist).
 
 ### Intent integration
 
@@ -346,7 +393,7 @@ existing `image:` path.
 
 ## Phase Breakdown
 
-### Phase 1 — `trond build` standalone (~3 days)
+### Phase 1 — `trond build` standalone (~4 days)
 
 **Deliverable**: `trond build --source <path> --artifact jar -o json` works
 end-to-end. No intent integration yet.
@@ -366,10 +413,27 @@ end-to-end. No intent integration yet.
 - `internal/build/signal.go`: SIGINT context propagation + cleanup
   (FR-016).
 - `internal/build/audit.go`: emits the FR-023 build-event JSON into the
-  existing `internal/audit` log.
-- `internal/build/pins.go`: `go:embed builder_image_digests.json`
-  (FR-024), with `--builder-image-override` resolver. Override values
-  feed into the cache key.
+  existing `internal/audit` log. Append `result: "in_progress"` at
+  start; update atomically to `success` / `failed` / `cancelled` on
+  completion. Crashed builds leave forensic-visible `in_progress`
+  entries.
+- `internal/build/pins/`: package owning the embedded JSON. Layout:
+  - `internal/build/pins/builder_image_digests.json` — checked-in,
+    embedded via `//go:embed builder_image_digests.json`
+  - `internal/build/pins/pins.go` — `Resolve(jdkVersion) (ref string,
+    err error)` plus the `--builder-image-override` resolver. Override
+    values feed into the cache key (FR-024). When a pinned digest
+    resolves but `docker pull` fails (registry deleted the tag),
+    surface `BUILDER_IMAGE_UNAVAILABLE` with suggestions; do NOT fall
+    back to an unpinned tag.
+  - Repo-root `builder_image_digests.json` becomes a generated symlink
+    (Makefile target) for editor convenience and the
+    `refresh-builder-pins` script's output target.
+- `internal/build/lock_posix.go` + `internal/build/lock_windows.go`:
+  POSIX `flock` vs in-process mutex (FR-015 windows caveat).
+- `internal/build/imagetag.go`: Docker reference-format validator
+  (FR-005). Uses `github.com/distribution/reference` (small, stdlib-
+  free transitively) or an inline regex equivalent.
 - `internal/schema/files/build.schema.json` + `schemas/output/build.schema.json`.
 - `internal/schema/embed.go`: bump SchemaVersion to 1.3.0; add entry to
   history comment.
@@ -402,14 +466,15 @@ end-to-end. No intent integration yet.
 **Deliverable**: `trond apply --intent dev.yaml` automatically builds.
 
 - `internal/intent/schema.go`: add `Build` struct, validator rules
-  (mutual exclusion with `image:`, valid jdk versions, etc.).
+  (mutual exclusion with `image:`, valid jdk versions, image_tag
+  reference-format check via `imagetag.go`).
 - `schemas/intent.schema.json`: add the `build:` block, document mutual
   exclusion with `image:`.
 - `internal/apply/apply.go`: insert `resolveBuild()` between validate and
   render. Resolved artifact ref is held on the in-memory intent. On
-  success record `build_revision` on the state node entry (FR-018).
+  success record `build_cache_key` on the state node entry (FR-018).
 - `internal/state/state.go`: extend node entry with optional
-  `build_revision`. SchemaVersion stays 1.3.0 (still MINOR; additive).
+  `build_cache_key`. SchemaVersion stays 1.3.0 (still MINOR; additive).
 - `internal/render/`: consume the resolved ref. For `runtime: jar`, point
   the systemd unit at `<sha>.jar`. For `runtime: docker`, use the local
   image tag with `pull_policy: never` (FR-005).
@@ -464,12 +529,16 @@ tools surfaced.
 
 - `cmd/build_list.go`, `cmd/build_inspect.go`, `cmd/build_prune.go`.
 - `internal/build/cache.go`: prune logic — LRU by `created_at`,
-  cross-references `state.json::nodes[].build_revision` to refuse deletion
-  of in-use builds (FR-018). Dirty-build entries (those with `+dirty-`
-  suffix) are pruned more aggressively (configurable `build.cache.dirty_ttl`
-  / `--cache-dirty-ttl`, default 7 days, `never` accepted — FR-025).
-  During prune, manifest entries pointing at missing artifacts (e.g., user
-  manually deleted a JAR) are also removed (FR-020 cleanup branch).
+  cross-references `state.json::nodes[].build_cache_key` to refuse
+  deletion of in-use builds (FR-018). For `--artifact image` entries,
+  prune runs `docker image rm <image_id>` (not `docker untag`) so
+  layer storage is released; docker's refcounting protects layers
+  shared with other tags. Dirty-build entries (those with `+dirty-`
+  suffix) are pruned more aggressively (configurable
+  `build.cache.dirty_ttl` / `--cache-dirty-ttl`, default 7 days,
+  `never` accepted — FR-025). During prune, manifest entries pointing
+  at missing artifacts (e.g., user manually deleted a JAR) are also
+  removed (FR-020 cleanup branch).
 - MCP tools (`internal/mcp/tools_build.go`): expose `build`, `build_list`,
   `build_inspect`, `build_prune` with annotations per FR-013:
   - `build`: `idempotentHint=true`, `destructiveHint=false`
@@ -486,10 +555,14 @@ tools surfaced.
 
 ## Total estimate
 
-~9-10 working days from MVP (Phase 1+2) to fully closed loop (Phase 1-6).
-Revised up from the v1 draft's 7-8 days after the self-review added
-non-trivial work to Phase 1 (signal handling, flock, patch hash bug fix)
-and Phase 4 (progress notifications, scp probe).
+~11-12 working days from MVP (Phase 1+2) to fully closed loop (Phase
+1-6). Revised up from:
+- v1 draft 7-8d (initial scope)
+- pass 1 (+2d): signal handling, flock, patch-hash bug fix → 9-10d
+- pass 3 (+2d): Windows split + flag allowlist + image_tag validator +
+  pins package + audit lifecycle → 11-12d
+
+Phase 1 alone is now ~4 working days (was 2 in v1, 3 in pass 1).
 
 ## Risks and mitigations
 
@@ -530,9 +603,11 @@ and Phase 4 (progress notifications, scp probe).
 ## Schema impact
 
 - SchemaVersion: 1.2.0 → **1.3.0** (MINOR: adds new `build` schema +
-  extends state node entry with optional `build_revision`; no breaking
+  extends state node entry with optional `build_cache_key`; no breaking
   changes to existing schemas).
 - New file: `schemas/output/build.schema.json`.
+- Modified: `schemas/state.schema.json` (additive: new optional
+  `build_cache_key` field on each node entry).
 - Modified: `schemas/intent.schema.json` (additive: new optional `build:`
   block).
 - Modified: `schemas/state.schema.json` (additive: optional
@@ -550,8 +625,6 @@ and Phase 4 (progress notifications, scp probe).
 3. Whether to expose a `--builder ssh:<host>` (build on a remote build
    server) in the future. Hook is there in the `Builder` interface; no
    implementation in v1.
-4. Should `build.env` allow arbitrary keys, or whitelist? v1: arbitrary.
-   If supply-chain concerns arise, narrow later.
 
 ## CHANGELOG
 
@@ -572,6 +645,26 @@ and Phase 4 (progress notifications, scp probe).
     passthrough) — all phases updated accordingly.
   - `pull_policy: never` made explicit for local-built docker images.
   - SSH progress notifications for transfers > 50 MB.
+- **2026-05-08 (self-review pass 3)**: Applied 10-item third review.
+  - Windows port: split `internal/build/lock_{posix,windows}.go` so
+    `syscall.Flock` doesn't break windows/amd64 builds.
+  - Defense correction: `gradle_args` validation is now a flag-name
+    allowlist (was a char regex). New "Security boundary" subsection
+    enumerates accepted and rejected flags with rationale.
+  - `internal/build/pins/` package owns the embedded JSON; the root
+    file is a Makefile-generated symlink for ergonomics.
+  - New `internal/build/imagetag.go` validates `build.image_tag`
+    against Docker reference format.
+  - State node field renamed `build_revision` → `build_cache_key` (the
+    value is a cache key, not just a sha).
+  - Phase 5 prune for image artifacts uses `docker image rm` (not
+    `docker untag`) so layer storage is actually freed.
+  - Audit-log lifecycle is now two-phase: `in_progress` at start,
+    atomic update to terminal on completion. Crashed builds leave
+    forensic-visible entries.
+  - Pin-unreachable behavior specified: error, not silent fallback.
+  - Phase 1 estimate 3d → 4d; total 9-10d → 11-12d.
+  - Open question #4 (`build.env` allowlist) removed — resolved in pass 2.
 - **2026-05-08 (self-review pass 2)**: Applied 12-item second review.
   - **Security hardening**: dedicated "Security boundary" section; argv-
     only subprocess invocation (no `bash -c`); FR-022 token regex on

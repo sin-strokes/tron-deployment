@@ -86,6 +86,45 @@ SBOM-attached, multi-arch matrix). That stays in tron-docker's CI. trond's
   `.tmp` suffix and renames on success so a cancelled transfer leaves
   no half-written artifact on the remote.
 
+### Session 2026-05-08 (review pass 3)
+
+- Q: `gradle_args` validation by character class? → A: **No.** Character
+  regex was both too tight (rejects `,` in `--projects=a,b,c`, spaces in
+  `-Dtitle=my title`) and too loose (allows `--init-script
+  /tmp/evil.gradle`, which is the actual threat). Switched to a
+  **flag-name allowlist**: `--offline`, `--no-daemon`, `--parallel`,
+  `--max-workers=N`, `--rerun-tasks`, `-D<key>=<val>`, `-P<key>=<val>`,
+  `-q`/`-i`/`-d`. The value portion is unrestricted (argv form is
+  already shell-safe). `gradle_task` continues to use a tight char
+  regex (`^[a-zA-Z][a-zA-Z0-9:_-]*$`) since task names are inherently
+  regular.
+- Q: Windows support for concurrent-build serialization? → A: trond
+  publishes a windows/amd64 binary, but `syscall.Flock` is POSIX-only.
+  Implementation split via `//go:build !windows` — Windows uses an
+  in-process mutex only (no cross-process protection). FR-015 caveat
+  records this. Doc says: concurrent `trond build` from two trond
+  processes is undefined on Windows.
+- Q: `image_tag` format validation? → A: Validated against Docker
+  reference format. `image_tag: /etc/passwd` and similar must be
+  rejected with `VALIDATION_ERROR` at intent parse time.
+- Q: `state.json` field naming — `build_revision` or `build_cache_key`?
+  → A: **`build_cache_key`.** The stored value is the full cache key
+  (`<sha>-b<digest>[+dirty-<patch>]`), not just a git revision. Renaming
+  pre-implementation so we don't ship the misleading name.
+- Q: What if a pinned builder image digest becomes unreachable? → A:
+  Fail loudly. `error_code: "BUILDER_IMAGE_UNAVAILABLE"`, suggestions
+  point at `--builder-image-override` and "upgrade trond." Do NOT
+  silently fall back to unpinned tags — that defeats reproducibility.
+- Q: Does `build prune` clean up docker image layer disk usage? → A:
+  Yes. For `--artifact image`, prune runs `docker image rm <id>` (not
+  just `docker untag`). Layers shared with other images stay because
+  docker handles refcounting.
+- Q: Audit log atomicity around long-running builds? → A: Append a
+  `result: "in_progress"` event at build start; update atomically to
+  the terminal state on completion. A crash mid-build leaves an
+  `in_progress` entry visible via `trond events`, surfacing the
+  forensic signal.
+
 ## User Scenarios & Testing
 
 ### User Story 1 — Build a JAR from local source (Priority: P1)
@@ -291,7 +330,10 @@ for max-iteration speed.
 - **FR-005**: The intent.yaml schema MUST accept a `build:` block that is
   mutually exclusive with `image:` and references source + revision. When
   `runtime: docker` + `artifact: image`, the rendered compose service MUST
-  carry `pull_policy: never`.
+  carry `pull_policy: never`. `build.image_tag` MUST match Docker's
+  reference format (validated via `github.com/distribution/reference` or
+  equivalent regex); paths, whitespace, and uppercase are rejected with
+  `VALIDATION_ERROR`.
 - **FR-006**: `trond apply` MUST resolve a `build:` block by invoking the
   build pipeline before the render/deploy phases.
 - **FR-007**: A build failure MUST set exit code 1 and `error_code:
@@ -324,6 +366,9 @@ for max-iteration speed.
   key MUST serialize via a per-key `flock` on
   `${TROND_STATE_DIR}/builds/locks/<key>.lock`. The waiting caller MUST
   return a cache hit after the first completes (not duplicate work).
+  On Windows (no POSIX `flock`), the implementation falls back to an
+  in-process mutex only; cross-process serialization is undefined and
+  documented as such. Goal: don't break the Windows build.
 - **FR-016**: `trond build` AND the build phase of `trond apply` MUST run
   under a signal-aware context. SIGINT MUST terminate the build container
   AND any in-flight scp transfer, remove partial output (`out/*.tmp`,
@@ -337,9 +382,13 @@ for max-iteration speed.
   offline hosts get a warning, not an error), (d) for SSH targets, scp
   is present on the remote.
 - **FR-018**: `trond build prune` MUST cross-reference `state.json` and
-  refuse to delete any build whose key equals the `build_revision` field
-  of a currently-managed node. The state schema gains an optional
-  `build_revision` field on each node entry (additive, MINOR bump).
+  refuse to delete any build whose cache key equals the
+  `build_cache_key` field of a currently-managed node. The state schema
+  gains an optional `build_cache_key` field on each node entry
+  (additive, MINOR bump). For `--artifact image` entries, prune MUST
+  call `docker image rm <image_id>` (not just `docker untag`) so layer
+  storage is actually released; docker's refcounting protects layers
+  shared with other tags.
 - **FR-019**: The build environment MUST forward env vars to the build
   container ONLY from a fixed allowlist: `GRADLE_OPTS`, `JAVA_OPTS`,
   `GRADLE_USER_HOME`, `MAVEN_OPTS`, and any var matching the
@@ -357,20 +406,40 @@ for max-iteration speed.
   docker-compose's `build.context` convention).
 - **FR-022**: All gradle invocations MUST use a no-shell argv form
   (`exec.Command("docker", "run", ..., image, "./gradlew", task,
-  args...)` — never `bash -c "..."`). The gradle task name and each
-  gradle arg MUST match `^[a-zA-Z0-9._:=/+-]+$`; non-matching values
-  MUST be rejected at parse time with `VALIDATION_ERROR`.
+  args...)` — never `bash -c "..."`). Validation:
+  - `gradle_task` MUST match `^[a-zA-Z][a-zA-Z0-9:_-]*$` (task names
+    are inherently regular). Examples accepted: `shadowJar`,
+    `:dbfork:build`. Rejected: anything with whitespace, `;`, `$()`,
+    or path separators.
+  - `gradle_args` is restricted by a **flag-name allowlist**, not a
+    character class. Accepted: `--offline`, `--no-daemon`, `--parallel`,
+    `--max-workers=<int>`, `--rerun-tasks`, `-D<key>=<val>`,
+    `-P<key>=<val>`, `-q` / `-i` / `-d`. The value portion of `-D`/`-P`
+    is unrestricted (argv form is already shell-safe). Any other
+    flag, including `--init-script`, `--include-build`, `--build-file`,
+    `--settings-file`, is rejected with `VALIDATION_ERROR` because they
+    can redirect the build to attacker-supplied logic.
 - **FR-023**: Each build event in the audit log MUST conform to:
-  `{timestamp, command: "build", result: "success"|"failed"|"cancelled",
-  build: {source_revision, dirty: bool, jdk_version, artifact_kind,
-  builder, duration_ms, error_code: string|null}}`. Schema is shared
-  with the existing audit-log shape.
+  `{timestamp, command: "build", result:
+  "in_progress"|"success"|"failed"|"cancelled", build:
+  {source_revision, dirty: bool, jdk_version, artifact_kind, builder,
+  duration_ms, error_code: string|null}}`. Lifecycle: append a
+  `result: "in_progress"` event at build start, then update atomically
+  to the terminal result on completion. A trond process crash mid-build
+  leaves an `in_progress` entry visible via `trond events`, surfacing
+  the forensic signal. Schema is shared with the existing audit-log
+  shape.
 - **FR-024**: `builder_image_digests.json` MUST be embedded into the
   trond binary via `go:embed`. Runtime override via
   `--builder-image-override <ref@sha256:...>` is allowed but is an
   escape hatch (not promoted in the dev-loop quickstart). Override values
   participate in the cache key (FR-002) so they don't pollute pinned
-  caches.
+  caches. When the pinned digest is unreachable (image removed from
+  registry, network outage of the registry itself), trond MUST exit
+  with `error_code: "BUILDER_IMAGE_UNAVAILABLE"`, `exit_code: 3`, and
+  surface suggestions covering both `--builder-image-override <ref>`
+  and "upgrade trond." trond MUST NOT silently fall back to an
+  unpinned tag — that defeats reproducibility.
 - **FR-025**: The dirty-build cache TTL MUST be user-configurable via
   `build.cache.dirty_ttl` in intent (or `--cache-dirty-ttl` on `build
   prune`). Default 7 days. Accepted: any Go `time.ParseDuration` value
@@ -391,8 +460,9 @@ for max-iteration speed.
   bundled with each trond release. Refresh path: `make
   refresh-builder-pins`.
 - **State node entry** (existing, extended): adds optional
-  `build_revision: string` field, populated by apply when the deploy
-  consumed a `build:` block.
+  `build_cache_key: string` field (full cache key, not just git sha),
+  populated by apply when the deploy consumed a `build:` block. Used by
+  `build prune` to refuse deletion of in-use builds.
 
 ### Success Criteria
 
@@ -443,6 +513,28 @@ for max-iteration speed.
   - US-2 gained scenario 4 (pull_policy: never).
   - US-4 gained scenarios 3-4 (progress, scp probe).
   - FR-013 MCP tool annotations now explicit.
+- **2026-05-08 (self-review pass 3)**: Applied 10-item third review.
+  - **Portability bug**: FR-015 now documents Windows fallback for
+    `flock` (in-process mutex only; cross-process serialization
+    undefined). Prevents windows/amd64 build break.
+  - **Defense correction**: FR-022 swaps the `gradle_args` char-regex
+    for a flag-name allowlist (`--init-script /tmp/evil.gradle` was
+    passing the old regex while legitimate `--projects=a,b,c` was
+    failing it). `gradle_task` keeps its tight char-regex since task
+    names are inherently regular.
+  - **Input validation**: FR-005 grows an `image_tag` reference-format
+    check (rejects `image_tag: /etc/passwd` etc.).
+  - **State naming**: `build_revision` field renamed to
+    `build_cache_key` — the stored value is the cache key
+    (`<sha>-b<digest>[+dirty-<patch>]`), not just a git sha.
+  - **Resilience**: FR-024 specifies behavior when a pinned digest
+    becomes unreachable — explicit error, no silent fallback to
+    unpinned tags.
+  - **Resource cleanup**: FR-018 prune now calls `docker image rm`
+    (not `docker untag`) so image layer storage is actually freed.
+  - **Audit lifecycle**: FR-023 introduces `result: "in_progress"`
+    appended at build start, atomically updated on completion. A
+    crashed build leaves an inspectable forensic entry.
 - **2026-05-08 (self-review pass 2)**: Applied 12-item second review.
   Material changes:
   - **Security**: FR-022 forbids shell-mediated gradle invocations
