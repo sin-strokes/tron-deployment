@@ -135,52 +135,55 @@ type BuildSummary struct {
 // partial-success (deploy succeeded, wait timed out); returns an error
 // only when the deploy itself failed.
 //
-// Idempotency: when opts.Existing.IntentHash == opts.IntentHash, Apply
-// short-circuits as a no-op (Outcome: "no_change") without rendering
-// or touching the runtime. This mirrors cmd/apply.go's hash-gate
-// behavior, but the gate's HUMAN_REQUIRED branch is the caller's
-// concern (it's a UX policy, not a deploy invariant).
+// Idempotency:
+//
+//  1. For intents WITHOUT a `build:` block, Apply short-circuits as a
+//     no-op when opts.Existing.IntentHash == opts.IntentHash — same
+//     intent.yaml content, nothing to do regardless of node status.
+//  2. For intents WITH a `build:` block, the source tree can change
+//     even when intent.yaml itself doesn't. In that case Apply first
+//     resolves the build (cache-hit-fast: ~150ms when nothing
+//     changed) and short-circuits ONLY when BOTH the intent hash AND
+//     the resolved build cache key match the existing managed node.
+//     This closes the dev-loop bug where editing a `.java` file
+//     without touching intent.yaml would silently no-op.
+//
+// Endpoints is reconstructed from the intent's port spec on the no-op
+// path: apply.schema.json declares it as an object and emitting
+// `null` (the zero value of map[string]string) violates the contract
+// for agents that always expect host:port pairs to probe.
 func Apply(ctx context.Context, opts Options) (*Result, error) {
 	if err := validateOptions(opts); err != nil {
 		return nil, err
 	}
 	start := time.Now()
-
-	// No-op short-circuit. Same hash → nothing to do regardless of
-	// the existing node's status. Callers that need "force redeploy
-	// of a stopped node" pass IntentHash="" or simply omit Existing.
-	//
-	// Endpoints is reconstructed from the intent's port spec rather
-	// than skipped: apply.schema.json declares it as an object and
-	// emitting `null` (the zero value of map[string]string) violates
-	// the contract for agents that always expect to find host:port
-	// pairs to probe.
-	if opts.Existing != nil && opts.Existing.IntentHash == opts.IntentHash {
-		ports := opts.Intent.Nodes[0].Ports
-		return &Result{
-			Name:       opts.Intent.Name,
-			Outcome:    "no_change",
-			IntentHash: opts.IntentHash,
-			ConfigHash: opts.Existing.ConfigHash,
-			Version:    opts.Existing.Version,
-			Runtime:    opts.Existing.Runtime,
-			Endpoints: map[string]string{
-				"http": fmt.Sprintf("http://127.0.0.1:%d", ports.HTTP),
-				"grpc": fmt.Sprintf("127.0.0.1:%d", ports.GRPC),
-			},
-			DurationMs: time.Since(start).Milliseconds(),
-		}, nil
-	}
-
 	node := &opts.Intent.Nodes[0]
+
+	// Fast path: intents without build blocks idempotency-gate on
+	// intent hash alone (legacy behavior preserved).
+	if node.Build == nil &&
+		opts.Existing != nil && opts.Existing.IntentHash == opts.IntentHash {
+		return noChangeResult(opts, nil, start), nil
+	}
 
 	// Resolve build before render. The artifact path it produces
 	// feeds into the systemd unit (jar runtime) or the compose
-	// image: field (docker runtime). Failures surface as structured
-	// errors and abort apply.
+	// image: field (docker runtime). Cache hit is < 200ms so this
+	// is cheap to run unconditionally when build is present.
+	// Failures surface as structured errors and abort apply.
 	buildSummary, builtJarPath, builtImageTag, buildErr := resolveBuild(ctx, opts, node)
 	if buildErr != nil {
 		return nil, buildErr
+	}
+
+	// Build-aware idempotency: same intent AND same build cache key →
+	// nothing changed end-to-end, even if the file timestamps moved.
+	if node.Build != nil &&
+		opts.Existing != nil &&
+		opts.Existing.IntentHash == opts.IntentHash &&
+		buildSummary != nil &&
+		opts.Existing.BuildCacheKey == buildSummary.CacheKey {
+		return noChangeResult(opts, buildSummary, start), nil
 	}
 
 	hocon, err := render.RenderHOCON(opts.TemplateDir, opts.Intent, node)
@@ -313,11 +316,53 @@ func validateOptions(o Options) error {
 	case o.IntentHash == "":
 		return fmt.Errorf("IntentHash is required")
 	}
+	// Defense-in-depth: callers SHOULD pre-validate via intent.Validate()
+	// (cobra apply does), but recipe / MCP / programmatic callers may
+	// bypass that. Enforce the artifact-source mutex here so a malformed
+	// caller can't deploy a node with both Build and Image both wired.
+	// Spec/002 FR-005.
+	n := &o.Intent.Nodes[0]
+	sources := 0
+	if n.Build != nil {
+		sources++
+	}
+	if n.Image != "" {
+		sources++
+	}
+	if n.Jar != nil {
+		sources++
+	}
+	if sources > 1 {
+		return fmt.Errorf("node %q: build, image, jar are mutually exclusive (pick one artifact source)", n.Type)
+	}
 	return nil
 }
 
 // sha256hex hashes a byte slice as lower-case hex. Mirrors the helper
 // in cmd/apply.go; duplicated here so this package has no cmd import.
+// noChangeResult constructs the no-op `Outcome: "no_change"`
+// envelope shared between the no-build fast path and the
+// build-aware short-circuit. Threading buildSummary keeps the result
+// consistent regardless of which gate fired — agents always see
+// the same shape.
+func noChangeResult(opts Options, buildSummary *BuildSummary, start time.Time) *Result {
+	ports := opts.Intent.Nodes[0].Ports
+	return &Result{
+		Name:       opts.Intent.Name,
+		Outcome:    "no_change",
+		IntentHash: opts.IntentHash,
+		ConfigHash: opts.Existing.ConfigHash,
+		Version:    opts.Existing.Version,
+		Runtime:    opts.Existing.Runtime,
+		Endpoints: map[string]string{
+			"http": fmt.Sprintf("http://127.0.0.1:%d", ports.HTTP),
+			"grpc": fmt.Sprintf("127.0.0.1:%d", ports.GRPC),
+		},
+		DurationMs: time.Since(start).Milliseconds(),
+		Build:      buildSummary,
+	}
+}
+
 func sha256hex(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])

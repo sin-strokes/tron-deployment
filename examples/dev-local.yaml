@@ -31,9 +31,8 @@ nodes:
     system_user: tron
     resources:
       memory: 4G
-    ports:
-      http: 0  # auto_ports allocates a free port
-      grpc: 0
+    # ports: omitted on purpose — target.auto_ports above grabs free
+    # OS ports so concurrent test enclaves don't fight over 8090/50051.
 
     build:
       # Adjust to wherever your java-tron checkout lives.

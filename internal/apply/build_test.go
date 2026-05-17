@@ -212,6 +212,201 @@ func TestApply_NoBuildBlockLeavesSummaryNil(t *testing.T) {
 	}
 }
 
+// TestApply_FullFlow_RecordsBuildCacheKey is the end-to-end Phase 2
+// happy path: cobra-equivalent Apply() with a `build:` intent →
+// build runs → systemd unit renders with built JAR → state.json
+// records BuildCacheKey for FR-018 prune protection. Uses fakeTarget
+// (Exec no-ops) so the jar runtime's systemctl calls don't fail.
+func TestApply_FullFlow_RecordsBuildCacheKey(t *testing.T) {
+	dir := t.TempDir()
+	paths.SetBaseDir(dir)
+	t.Cleanup(func() { paths.SetBaseDir("") })
+
+	src := filepath.Join(dir, "java-tron")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	initGitRepo(t, src)
+
+	restore := build.SetTestRunner(&fakeBuilderRunner{})
+	defer restore()
+
+	in := &intent.Intent{
+		Name:    "dev-node",
+		Network: "nile",
+		Target:  intent.Target{Type: "local", Runtime: "jar"},
+		Nodes: []intent.NodeSpec{{
+			Type:        "fullnode",
+			Version:     "4.8.1",
+			Resources:   intent.Resources{Memory: "4G"},
+			Ports:       intent.PortMapping{HTTP: 8090, GRPC: 50051},
+			InstallPath: filepath.Join(dir, "install"),
+			Build: &intent.BuildSpec{
+				Source:               src,
+				Revision:             "HEAD",
+				JDK:                  "8",
+				Artifact:             "jar",
+				BuilderImageOverride: "test-image@sha256:abcdef1234567890",
+			},
+		}},
+	}
+
+	store, st := freshStore(t)
+	res, err := Apply(context.Background(), Options{
+		Intent:         in,
+		Target:         &fakeTarget{},
+		Store:          store,
+		State:          st,
+		IntentHash:     "phase2-test-hash",
+		TemplateDir:    "", // use embedded templates
+		DeploymentsDir: filepath.Join(dir, "deployments"),
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if res.Build == nil {
+		t.Fatal("Result.Build nil — build pipeline did not run")
+	}
+	if res.Build.CacheKey == "" {
+		t.Error("Result.Build.CacheKey empty")
+	}
+	if res.Outcome != "created" {
+		t.Errorf("Outcome = %q; want created", res.Outcome)
+	}
+
+	// State persistence: ManagedNode.BuildCacheKey must equal what
+	// Result.Build.CacheKey reports — Phase 5 prune relies on this.
+	stored, err := store.Load()
+	if err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+	if len(stored.Nodes) != 1 {
+		t.Fatalf("expected 1 stored node; got %d", len(stored.Nodes))
+	}
+	if stored.Nodes[0].BuildCacheKey != res.Build.CacheKey {
+		t.Errorf("state.BuildCacheKey = %q; want %q (matching Result)",
+			stored.Nodes[0].BuildCacheKey, res.Build.CacheKey)
+	}
+}
+
+// TestApply_DirtySourceTriggersRebuild is the FR-002 + Phase 2
+// regression guard: the dev-loop bug we fixed. Same intent.yaml,
+// modified source tree → trond MUST NOT no-op as it did pre-fix.
+func TestApply_DirtySourceTriggersRebuild(t *testing.T) {
+	dir := t.TempDir()
+	paths.SetBaseDir(dir)
+	t.Cleanup(func() { paths.SetBaseDir("") })
+
+	src := filepath.Join(dir, "java-tron")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	initGitRepo(t, src)
+
+	stub := &fakeBuilderRunner{}
+	restore := build.SetTestRunner(stub)
+	defer restore()
+
+	in := &intent.Intent{
+		Name:    "dev-node",
+		Network: "nile",
+		Target:  intent.Target{Type: "local", Runtime: "jar"},
+		Nodes: []intent.NodeSpec{{
+			Type:        "fullnode",
+			Version:     "4.8.1",
+			Resources:   intent.Resources{Memory: "4G"},
+			Ports:       intent.PortMapping{HTTP: 8090, GRPC: 50051},
+			InstallPath: filepath.Join(dir, "install"),
+			Build: &intent.BuildSpec{
+				Source:               src,
+				Revision:             "HEAD",
+				JDK:                  "8",
+				BuilderImageOverride: "test-image@sha256:abcdef1234567890",
+			},
+		}},
+	}
+
+	store, st := freshStore(t)
+	res1, err := Apply(context.Background(), Options{
+		Intent:         in,
+		Target:         &fakeTarget{},
+		Store:          store,
+		State:          st,
+		IntentHash:     "same-intent-hash",
+		TemplateDir:    "",
+		DeploymentsDir: filepath.Join(dir, "deployments"),
+	})
+	if err != nil {
+		t.Fatalf("first Apply: %v", err)
+	}
+	if res1.Outcome != "created" {
+		t.Fatalf("first apply outcome = %q; want created", res1.Outcome)
+	}
+
+	// Plant an untracked source file. intent.yaml does NOT change.
+	if err := os.WriteFile(filepath.Join(src, "NEW.java"),
+		[]byte("class Whatever {}\n"), 0o600); err != nil {
+		t.Fatalf("plant dirty file: %v", err)
+	}
+
+	existing := state.ManagedNode{
+		Name:          in.Name,
+		IntentHash:    "same-intent-hash",
+		BuildCacheKey: res1.Build.CacheKey,
+		ConfigHash:    res1.ConfigHash,
+		Version:       res1.Version,
+		Runtime:       "jar",
+	}
+	res2, err := Apply(context.Background(), Options{
+		Intent:         in,
+		Target:         &fakeTarget{},
+		Store:          store,
+		State:          st,
+		IntentHash:     "same-intent-hash",
+		Existing:       &existing,
+		TemplateDir:    "",
+		DeploymentsDir: filepath.Join(dir, "deployments"),
+	})
+	if err != nil {
+		t.Fatalf("second Apply: %v", err)
+	}
+	// Source changed → build cache key MUST differ → MUST NOT no-op.
+	if res2.Outcome == "no_change" {
+		t.Fatal("dirty source change was silently ignored — Phase 2 dev-loop bug regressed")
+	}
+	if res2.Build.CacheKey == res1.Build.CacheKey {
+		t.Error("dirty source did not produce a new cache key")
+	}
+}
+
+// TestApply_RejectsBuildAndImageMutex is the defense-in-depth check
+// at apply.Apply: callers bypassing intent.Validate() still get
+// rejected if they wired both Build and Image on the same node.
+func TestApply_RejectsBuildAndImageMutex(t *testing.T) {
+	in := &intent.Intent{
+		Name:    "bad",
+		Network: "nile",
+		Target:  intent.Target{Type: "local"},
+		Nodes: []intent.NodeSpec{{
+			Type:  "fullnode",
+			Image: "tronprotocol/java-tron:latest",
+			Build: &intent.BuildSpec{Source: "/tmp/x"},
+		}},
+	}
+	store, st := freshStore(t)
+	_, err := Apply(context.Background(), Options{
+		Intent:     in,
+		Target:     &fakeTarget{},
+		Store:      store,
+		State:      st,
+		IntentHash: "doesnt-matter",
+	})
+	if err == nil {
+		t.Fatal("expected mutex error from validateOptions")
+	}
+}
+
 // TestApply_BuildKeyLandsInState exercises the state persistence
 // branch via a synthetic Result construction. Confirms the
 // ManagedNode.BuildCacheKey field is wired.

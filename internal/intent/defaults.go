@@ -120,7 +120,11 @@ func applyNodeDefaults(node *NodeSpec) {
 	if node.Version == "" {
 		node.Version = "latest"
 	}
-	if node.Image == "" {
+	// Skip the default Image when a Build block is present — they're
+	// mutually exclusive (FR-005). Otherwise the mutex check would
+	// fail on re-validation post-defaults, and worse: a docker
+	// runtime would try to pull an image trond doesn't intend to use.
+	if node.Image == "" && node.Build == nil {
 		node.Image = "tronprotocol/java-tron"
 	}
 	if node.InstallPath == "" {
@@ -131,6 +135,34 @@ func applyNodeDefaults(node *NodeSpec) {
 	}
 	if node.SystemUser == "" {
 		node.SystemUser = "tron"
+	}
+
+	// BuildSpec defaults. The build pipeline owns the canonical
+	// defaults (build.Request.withDefaults), but filling them here too
+	// makes `trond config validate --explain` surface them and keeps
+	// downstream consumers from having to re-derive the same values.
+	// Keep the two in lockstep.
+	if node.Build != nil {
+		if node.Build.Revision == "" {
+			node.Build.Revision = "HEAD"
+		}
+		if node.Build.JDK == "" {
+			node.Build.JDK = "8"
+		}
+		if node.Build.Artifact == "" {
+			node.Build.Artifact = "jar"
+		}
+		if node.Build.Builder == "" {
+			node.Build.Builder = "docker"
+		}
+		if node.Build.GradleTask == "" {
+			switch node.Build.Artifact {
+			case "jar":
+				node.Build.GradleTask = "shadowJar"
+			case "image":
+				node.Build.GradleTask = "dockerBuild"
+			}
+		}
 	}
 
 	// Feature defaults
