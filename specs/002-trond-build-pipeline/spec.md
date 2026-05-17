@@ -57,6 +57,35 @@ SBOM-attached, multi-arch matrix). That stays in tron-docker's CI. trond's
 - Q: Configurable gradle task name? → A: Yes, as `build.gradle_task` field
   with sensible defaults (`shadowJar` for jar, `dockerBuild` for image).
 
+### Session 2026-05-08 (review pass 2)
+
+- Q: How to pass gradle_task / gradle_args without shell injection? →
+  A: Never invoke `bash -c`. Pass gradle task and args as separate
+  `exec.Command` argv; validate each token against
+  `^[a-zA-Z0-9._:=/+-]+$` at parse time and reject otherwise.
+- Q: Should the cache key incorporate the builder image digest? → A: Yes.
+  Cache key becomes `<git-sha>-b<digest-prefix>` so a pin bump silently
+  invalidates stale artifacts. Same for `+dirty-` variants.
+- Q: `build.env` arbitrary keys? → A: **No.** v1 is an allowlist: env
+  passthrough is restricted to `GRADLE_OPTS`, `JAVA_OPTS`,
+  `GRADLE_USER_HOME`, `MAVEN_OPTS`, and any var matching
+  `ORG_GRADLE_PROJECT_*`. Extending the list is a code change, not an
+  intent change.
+- Q: How is `builder_image_digests.json` distributed? → A: Embedded into
+  the trond binary via `go:embed`. Pin bumps ship with releases. A
+  `--builder-image-override <ref@sha256:...>` escape hatch exists for
+  emergencies but is not documented in the dev-loop quickstart.
+- Q: Source path relative to what? → A: CLI `--source ./path` resolves
+  relative to CWD. `build.source: ./path` in intent resolves relative
+  to the intent file's directory (matches docker-compose `build.context`).
+- Q: Should cache hit verify the artifact file exists on disk? → A: Yes.
+  Manifest existence is necessary but not sufficient; cache lookup MUST
+  stat the artifact and treat a missing file as a miss.
+- Q: Should SIGINT cancel scp transfers too? → A: Yes. The whole apply
+  flow runs under the same signal-aware context. scp writes to a
+  `.tmp` suffix and renames on success so a cancelled transfer leaves
+  no half-written artifact on the remote.
+
 ## User Scenarios & Testing
 
 ### User Story 1 — Build a JAR from local source (Priority: P1)
@@ -246,12 +275,15 @@ for max-iteration speed.
 - **FR-001**: trond MUST expose a `trond build` cobra command accepting at
   minimum `--source <path>`, `--artifact <jar|image>`, `--revision <rev>`,
   `--jdk <version>`, `--builder <docker|host>`, `--tag <tag>` (for image),
-  `--gradle-task <name>` (override default).
-- **FR-002**: The build cache MUST be content-addressed. The cache key for
-  clean working trees is the resolved git sha. For dirty working trees, the
-  key MUST incorporate a patch hash computed over the combined output of
-  `git diff` AND `git status --porcelain -uall` (so untracked files
-  invalidate cache).
+  `--gradle-task <name>` (override default), `--gradle-arg <flag>`
+  (repeatable; e.g. `--gradle-arg=--offline`).
+- **FR-002**: The build cache MUST be content-addressed. The cache key
+  MUST combine: resolved git sha, builder image digest prefix (so a pin
+  bump silently invalidates stale artifacts), jdk version, artifact kind,
+  gradle task name, and, for dirty working trees, a patch hash computed
+  over the COMBINED output of `git diff` AND `git status --porcelain
+  -uall` (so untracked files invalidate cache). On-disk naming:
+  `<git-sha>-b<digest6>[+dirty-<patchsha8>].(jar|imgmeta)`.
 - **FR-003**: Build outputs MUST live under `${TROND_STATE_DIR}/builds/`
   (default `~/.trond/builds/`) and respect `--state-dir` / `TROND_STATE_DIR`.
 - **FR-004**: Each completed build MUST produce a JSON manifest matching
@@ -292,30 +324,66 @@ for max-iteration speed.
   key MUST serialize via a per-key `flock` on
   `${TROND_STATE_DIR}/builds/locks/<key>.lock`. The waiting caller MUST
   return a cache hit after the first completes (not duplicate work).
-- **FR-016**: `trond build` MUST handle SIGINT by terminating the build
-  container, removing partial output, omitting the manifest entry, and
-  exiting 130 with `error_code: "BUILD_CANCELLED"`.
+- **FR-016**: `trond build` AND the build phase of `trond apply` MUST run
+  under a signal-aware context. SIGINT MUST terminate the build container
+  AND any in-flight scp transfer, remove partial output (`out/*.tmp`,
+  remote `*.tmp` files), omit the manifest entry, and exit 130 with
+  `error_code: "BUILD_CANCELLED"`.
 - **FR-017**: `trond preflight --intent <yaml>` MUST, when the intent
-  contains a `build:` block, additionally verify: (a) source path exists and
-  is a git repo, (b) docker is reachable (or host gradle exists with
-  `--builder host`), (c) the builder image is in the local cache or can be
-  pulled, (d) for SSH targets, scp is present on the remote.
+  contains a `build:` block, additionally verify: (a) source path exists
+  and is a git repo, (b) docker is reachable (or host gradle exists with
+  `--builder host`), (c) the builder image is in the local cache (a
+  network-reachable warm-pull check runs only when the image is missing;
+  offline hosts get a warning, not an error), (d) for SSH targets, scp
+  is present on the remote.
 - **FR-018**: `trond build prune` MUST cross-reference `state.json` and
-  refuse to delete any build whose sha equals the `build_revision` field
+  refuse to delete any build whose key equals the `build_revision` field
   of a currently-managed node. The state schema gains an optional
   `build_revision` field on each node entry (additive, MINOR bump).
-- **FR-019**: The build environment MUST forward `GRADLE_OPTS` and
-  `JAVA_OPTS` from the trond invocation environment into the build
-  container. Additional pass-through can be requested via the intent's
-  `build.env: { KEY: VALUE }` map (v1 scope: any KEY allowed).
+- **FR-019**: The build environment MUST forward env vars to the build
+  container ONLY from a fixed allowlist: `GRADLE_OPTS`, `JAVA_OPTS`,
+  `GRADLE_USER_HOME`, `MAVEN_OPTS`, and any var matching the
+  `ORG_GRADLE_PROJECT_*` prefix. Intent-side `build.env: { KEY: VALUE }`
+  is also restricted to this allowlist; unknown keys MUST fail validation
+  with `VALIDATION_ERROR`. Extending the allowlist is a trond code
+  change, not an intent change.
+- **FR-020**: Cache lookup MUST stat the manifest's referenced artifact
+  (jar file or local image tag) and treat a missing artifact as a cache
+  miss. Manifests pointing at missing artifacts MUST be removed during
+  the next prune.
+- **FR-021**: Source path resolution: `--source ./path` on the CLI
+  resolves relative to CWD; `build.source: ./path` in intent.yaml
+  resolves relative to the intent file's parent directory (matching
+  docker-compose's `build.context` convention).
+- **FR-022**: All gradle invocations MUST use a no-shell argv form
+  (`exec.Command("docker", "run", ..., image, "./gradlew", task,
+  args...)` — never `bash -c "..."`). The gradle task name and each
+  gradle arg MUST match `^[a-zA-Z0-9._:=/+-]+$`; non-matching values
+  MUST be rejected at parse time with `VALIDATION_ERROR`.
+- **FR-023**: Each build event in the audit log MUST conform to:
+  `{timestamp, command: "build", result: "success"|"failed"|"cancelled",
+  build: {source_revision, dirty: bool, jdk_version, artifact_kind,
+  builder, duration_ms, error_code: string|null}}`. Schema is shared
+  with the existing audit-log shape.
+- **FR-024**: `builder_image_digests.json` MUST be embedded into the
+  trond binary via `go:embed`. Runtime override via
+  `--builder-image-override <ref@sha256:...>` is allowed but is an
+  escape hatch (not promoted in the dev-loop quickstart). Override values
+  participate in the cache key (FR-002) so they don't pollute pinned
+  caches.
+- **FR-025**: The dirty-build cache TTL MUST be user-configurable via
+  `build.cache.dirty_ttl` in intent (or `--cache-dirty-ttl` on `build
+  prune`). Default 7 days. Accepted: any Go `time.ParseDuration` value
+  plus the literal `never`.
 
 ### Key Entities
 
 - **Build**: A content-addressed compilation of a java-tron source tree.
-  Properties: source_revision (git sha), patch_hash (if dirty), jdk_version,
+  Properties: source_revision (git sha), patch_hash (if dirty),
+  builder_image_digest (which JDK image produced this), jdk_version,
   artifact_kind (jar|image), artifact_ref (path or image tag),
   sha256/image_id, duration_ms, builder (docker|host), gradle_task,
-  created_at.
+  gradle_args, created_at.
 - **Source**: A reference to a java-tron checkout. Properties: path
   (canonicalized), revision_spec (HEAD|branch|tag|sha), resolved_revision,
   dirty_state (boolean), patch_hash (when dirty_state).
@@ -362,14 +430,39 @@ for max-iteration speed.
 ## CHANGELOG
 
 - **2026-05-08**: Initial draft.
-- **2026-05-08 (self-review)**: Applied 17-item review. Material changes:
+- **2026-05-08 (self-review pass 1)**: Applied 17-item review. Material
+  changes:
   - Removed ambiguous `build.rebuild: always|on_change|never` field.
-  - FR-002 patch hash now MUST include untracked files (regression bug fix
-    in design).
+  - FR-002 patch hash now MUST include untracked files (regression bug
+    fix in design).
   - FR-005 makes `pull_policy: never` explicit for local-built images.
-  - FR-015 (concurrent lock), FR-016 (SIGINT), FR-017 (preflight), FR-018
-    (prune cross-ref state), FR-019 (env passthrough) all newly added.
+  - FR-015 (concurrent lock), FR-016 (SIGINT), FR-017 (preflight),
+    FR-018 (prune cross-ref state), FR-019 (env passthrough) all newly
+    added.
   - US-1 gained acceptance scenarios 6-7 (SIGINT, concurrent).
   - US-2 gained scenario 4 (pull_policy: never).
   - US-4 gained scenarios 3-4 (progress, scp probe).
   - FR-013 MCP tool annotations now explicit.
+- **2026-05-08 (self-review pass 2)**: Applied 12-item second review.
+  Material changes:
+  - **Security**: FR-022 forbids shell-mediated gradle invocations
+    (closes command-injection via `gradle_task` / `gradle_args`); FR-019
+    narrows `build.env` from "any KEY" to a fixed allowlist (closes
+    `LD_PRELOAD`-style hijacks). Token regex added to `--gradle-task`
+    and `--gradle-arg`.
+  - **Correctness**: FR-002 cache key now includes builder image digest
+    (pin bump invalidates stale artifacts); FR-020 makes cache hit also
+    verify artifact file exists on disk.
+  - **Distribution**: FR-024 makes the pin file `go:embed`-ed so the
+    binary is the source of truth, with `--builder-image-override` as
+    documented escape hatch.
+  - **UX**: FR-021 disambiguates `source:` relative path resolution
+    (CLI = CWD, intent = intent-file dir).
+  - **Robustness**: FR-016 extends SIGINT handling to scp; uses
+    `.tmp` + rename so remote never sees half-written JARs.
+    FR-017 builder-image preflight is offline-friendly (warning on
+    missing-and-offline, not hard fail).
+  - **Audit/observability**: FR-023 fixes the audit-log build event
+    JSON shape so tooling can rely on it.
+  - **Configurability**: FR-001 grows `--gradle-arg <flag>` repeatable;
+    FR-025 makes dirty-cache TTL user-tunable (default 7d).

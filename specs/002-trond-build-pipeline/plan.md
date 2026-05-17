@@ -69,8 +69,10 @@ the container; trond is the conductor.
                   └─► -v <source>:/src:ro
                        -v <cache>/gradle:/root/.gradle
                        -v <cache>/out:/out:rw
-                       -e GRADLE_OPTS, JAVA_OPTS, build.env.*
-                       bash -c "./gradlew <task> && cp build/libs/*.jar /out/"
+                       -e GRADLE_OPTS, JAVA_OPTS, ORG_GRADLE_PROJECT_* (allowlist only)
+                       --workdir /src
+                       ./gradlew <task> <args...>
+                       (NO `bash -c`; argv-form only — FR-022)
 
                   internal/build/cache.go
                   (content-addressed cache, manifest dir, prune logic,
@@ -112,28 +114,53 @@ opaque blobs.
 
 ```go
 type CacheKey struct {
-    SourcePath   string // canonicalized abs path (symlinks resolved)
-    GitRevision  string // resolved sha
-    PatchHash    string // sha256 of (git diff || git status --porcelain -uall) if dirty
-    JDKVersion   string
-    ArtifactKind string // "jar" | "image"
-    GradleTask   string // "shadowJar" | "dockerBuild" | custom
+    SourcePath          string // canonicalized abs path (symlinks resolved)
+    GitRevision         string // resolved sha
+    PatchHash           string // sha256(git diff || git status --porcelain -uall) if dirty
+    BuilderImageDigest  string // sha256:... of the JDK image actually used
+    JDKVersion          string
+    ArtifactKind        string // "jar" | "image"
+    GradleTask          string // "shadowJar" | "dockerBuild" | custom
+    GradleArgs          []string
 }
 
 func (k CacheKey) String() string {
+    bd := k.BuilderImageDigest[7:13] // strip "sha256:" then take 6 hex chars
+    base := fmt.Sprintf("%s-b%s", k.GitRevision, bd)
     if k.PatchHash != "" {
-        return fmt.Sprintf("%s+dirty-%s", k.GitRevision, k.PatchHash[:8])
+        return fmt.Sprintf("%s+dirty-%s", base, k.PatchHash[:8])
     }
-    return k.GitRevision
+    return base
 }
 ```
 
-**Critical**: PatchHash combines BOTH `git diff` AND `git status
---porcelain -uall`. A diff alone misses untracked files, which would
-silently cache-hit a stale artifact (the bug found in self-review, FR-002).
+**Critical**:
+- PatchHash combines BOTH `git diff` AND `git status --porcelain -uall`.
+  Diff alone misses untracked files (FR-002, regression bug found in
+  pass 1).
+- BuilderImageDigest is in the key (FR-002, found in pass 2). When a
+  trond release bumps the JDK pin, every cache entry is automatically
+  invalidated — no manual prune required.
+- GradleArgs participates (different `-Dflag` produces different bytes).
 
-Two different source paths producing the same sha hit the same cache (this
-is the intent — a build is determined by its inputs, not its location).
+Two different source paths producing the same sha hit the same cache
+(this is the intent — a build is determined by its inputs, not its
+location).
+
+### Artifact naming pattern on disk
+
+```
+~/.trond/builds/out/<git-sha>-b<digest6>[+dirty-<patchsha8>].jar
+                       ^^^^^^^   ^^^^^^^^
+                       6 hex     6 hex prefix of patch sha
+                       prefix    when working tree dirty
+                       of image
+                       sha256
+```
+
+Example: `8f4e2a-bd4e2a1+dirty-7f2a3b9c.jar` reads as
+"revision 8f4e2a, built by image digest starting d4e2a1, with dirty patch
+7f2a3b9c". Long enough for collision safety, short enough to grep.
 
 ### Concurrent build serialization (FR-015)
 
@@ -154,12 +181,18 @@ if hit := cacheLookup(key); hit != nil {
 
 ### SIGINT handling (FR-016)
 
+`signal.NotifyContext` is installed once at the `apply` (or `build`)
+entry point and threaded through every subprocess that runs after it —
+docker, git, ssh, scp. Each invocation uses `exec.CommandContext`, so
+cancellation propagates as SIGKILL to the child.
+
 ```go
 ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 defer cancel()
 
+// build phase
 cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--name", containerName, ...)
-defer cleanup(containerName) // best-effort `docker kill` + `rm -rf out/<partial>`
+defer cleanup(containerName) // best-effort `docker kill` + `rm -f out/*.tmp`
 
 if err := cmd.Run(); err != nil {
     if errors.Is(ctx.Err(), context.Canceled) {
@@ -167,7 +200,47 @@ if err := cmd.Run(); err != nil {
     }
     return errResult("BUILD_FAILED", 1, err, suggestionsFromTail(cmd))
 }
+
+// transfer phase (SSH target) — same ctx, same cancellation semantics
+//   - scp writes to `<remote>.tmp`, rename only on clean exit
+//   - on ctx cancel: trond runs `ssh remote 'rm -f <remote>.tmp'` best-effort
 ```
+
+Writing output via a `.tmp` suffix and rename-on-success guarantees that
+a cancelled build/transfer leaves no half-written file pretending to be
+a finished artifact — neither locally nor on the SSH target.
+
+### Security boundary: subprocess invocation
+
+A user-controlled intent file (or a `--gradle-task` CLI flag) MUST NOT
+be able to inject shell metacharacters into the build pipeline. Two
+guardrails (FR-022):
+
+1. **Argv-only**. Every subprocess goes through `exec.Command(name,
+   args...)` with no intervening shell. No `bash -c`, no
+   `sh -c "..."`. The container's entrypoint stays `./gradlew`
+   directly.
+
+   ```go
+   // GOOD
+   cmd := exec.CommandContext(ctx, "docker", "run", "--rm",
+       "-v", srcMount, "-v", outMount, "--workdir", "/src",
+       imageRef,
+       "./gradlew", task, gradleArgs...)
+
+   // BAD — would have enabled $(...) and ; injection
+   cmd := exec.CommandContext(ctx, "bash", "-c",
+       fmt.Sprintf("docker run ... %s && cp ...", task))
+   ```
+
+2. **Token-regex validation at parse time**. `gradle_task` and each
+   `gradle_arg` MUST match `^[a-zA-Z0-9._:=/+-]+$`. Names like
+   `shadowJar`, `:dbfork:build`, `-Dorg.gradle.daemon=false`,
+   `--offline`, `-Pversion=1.2.3` all pass. Anything with whitespace,
+   semicolons, redirection, backticks, `$()`, or quotes is rejected as
+   `VALIDATION_ERROR` before docker is even invoked.
+
+The same gate guards `build.env` values (FR-019 allowlist).
 
 ### Intent integration
 
@@ -190,8 +263,13 @@ build:
   image_tag: dev:latest      # required if artifact=image
   builder: docker            # default; "host" available
   gradle_task: shadowJar     # default depends on artifact
-  env:                       # additive env passthrough (FR-019)
-    GRADLE_OPTS: "-Xmx2g"
+  gradle_args:               # extra gradle args (FR-001, FR-022)
+    - --no-daemon
+    - -Dorg.gradle.parallel=true
+  env:                       # allowlisted env only (FR-019)
+    GRADLE_OPTS: "-Xmx2g"    # GRADLE_OPTS|JAVA_OPTS|GRADLE_USER_HOME|MAVEN_OPTS|ORG_GRADLE_PROJECT_*
+  cache:
+    dirty_ttl: 7d            # FR-025; "never" allowed
 ```
 
 Note: `rebuild: always|on_change|never` is **removed** from the v1 draft.
@@ -273,31 +351,51 @@ existing `image:` path.
 **Deliverable**: `trond build --source <path> --artifact jar -o json` works
 end-to-end. No intent integration yet.
 
-- `cmd/build.go`: cobra command, flags, JSON output via `output.Result`.
+- `cmd/build.go`: cobra command, flags (`--gradle-task`, `--gradle-arg`,
+  `--builder-image-override`, etc.), JSON output via `output.Result`.
 - `internal/build/builder.go`: `Builder` interface, default impl, docker
-  and host paths inline.
-- `internal/build/cache.go`: manifest read/write, cache lookup, flock
-  serialization (FR-015).
+  and host paths inline. Argv-only subprocess invocation (FR-022).
+- `internal/build/cache.go`: manifest read/write, cache lookup that also
+  stats the artifact file (FR-020), flock serialization (FR-015),
+  builder-digest-aware key (FR-002).
 - `internal/build/source.go`: shell-out wrapper for `git rev-parse`,
   `status --porcelain -uall`, `diff`; patch hash combining both (FR-002).
-- `internal/build/validate.go`: JAR `Main-Class` check via `archive/zip`.
-- `internal/build/signal.go`: SIGINT handler (FR-016).
+- `internal/build/validate.go`: JAR `Main-Class` check via `archive/zip`,
+  argv token regex `^[a-zA-Z0-9._:=/+-]+$` for gradle task + args
+  (FR-022), env-key allowlist (FR-019).
+- `internal/build/signal.go`: SIGINT context propagation + cleanup
+  (FR-016).
+- `internal/build/audit.go`: emits the FR-023 build-event JSON into the
+  existing `internal/audit` log.
+- `internal/build/pins.go`: `go:embed builder_image_digests.json`
+  (FR-024), with `--builder-image-override` resolver. Override values
+  feed into the cache key.
 - `internal/schema/files/build.schema.json` + `schemas/output/build.schema.json`.
 - `internal/schema/embed.go`: bump SchemaVersion to 1.3.0; add entry to
   history comment.
 - `internal/schema/version_baseline.json`: regenerate via make target.
-- `builder_image_digests.json` at repo root, plus
-  `Makefile :: refresh-builder-pins` (FR-012).
+- `builder_image_digests.json` checked in at the repo root (also embedded
+  via go:embed); `Makefile :: refresh-builder-pins` regenerates it (FR-012).
 - Tests:
   - `cmd/build_test.go`: cobra wiring + JSON shape.
-  - `internal/build/builder_test.go`: unit with a fake `dockerRunner`.
+  - `internal/build/builder_test.go`: unit with a fake `dockerRunner`;
+    asserts argv form and the absence of any shell invocation.
   - `internal/build/cache_test.go`: cache hit / dirty key including
-    untracked files / prune / concurrent flock.
+    untracked files / cache miss when artifact deleted (FR-020) / cache
+    invalidation on builder-digest change / prune / concurrent flock.
   - `internal/build/source_test.go`: patch hash regression test for
     untracked file invalidation.
-  - `internal/build/signal_test.go`: SIGINT mid-build cleanup.
+  - `internal/build/signal_test.go`: SIGINT mid-build cleanup; asserts
+    `out/*.tmp` removed.
+  - `internal/build/validate_test.go`: token regex rejects `;`, ``` ` ```,
+    `$()`, whitespace, etc.; env-allowlist rejects `LD_PRELOAD`,
+    `PATH`, etc.
   - Golden test: a tiny synthetic source tree produces a deterministic
     manifest (excluding `duration_ms` and `created_at`).
+  - **Integration test (build-tag gated)**: `internal/build/integration_test.go`
+    (`//go:build integration`) runs a real `eclipse-temurin:8-jdk` against
+    a 10-line hello-world gradle project, asserts the produced JAR is
+    structurally valid. Runs in CI on the e2e job; skipped on `go test ./...`.
 
 ### Phase 2 — Intent integration (~2 days)
 
@@ -340,15 +438,24 @@ end-to-end. No intent integration yet.
 
 **Deliverable**: build locally, deploy over SSH.
 
-- `internal/target/ssh/scp.go`: add a `Sha256IfExists(remotePath)` probe,
-  a `PutFile(localPath, remotePath)` op with `-v` parsing for progress.
+- `internal/target/ssh/scp.go`: add a `Sha256IfExists(remotePath)` probe;
+  a `PutFile(ctx, localPath, remotePath)` op that:
+  - Writes to `<remotePath>.tmp` first.
+  - Pipes `-v` (or `-p` byte counts) through a parser that converts to
+    MCP `progress` notifications for transfers > 50 MB (FR-009).
+  - On ctx cancel: tries `ssh remote 'rm -f <remotePath>.tmp'`
+    best-effort, then returns `BUILD_CANCELLED` (FR-016 SSH branch).
+  - On success: atomic rename to `<remotePath>`.
 - `internal/target/ssh/preflight.go`: add `command -v scp` probe (FR-017).
 - `internal/apply/apply.go`: when target is SSH and artifact is JAR, after
   the build call `target.PutFile`. Skip if remote sha256 matches.
-- `internal/mcp`: emit progress notifications for transfers > 50 MB (FR-009).
 - `examples/dev-ssh.yaml`.
-- Tests: integration test with an SSH-target container (already used by
-  existing e2e suite). One test asserts the progress notification fires.
+- Tests:
+  - Integration test against an SSH-target container (already used by
+    existing e2e suite). Asserts the `.tmp`-then-rename pattern, the
+    progress notification firing for a synthesized large file, and the
+    `command -v scp` preflight check.
+  - SIGINT during transfer leaves no `<remotePath>.tmp` on the remote.
 
 ### Phase 5 — Build management commands & MCP (~1 day)
 
@@ -359,8 +466,10 @@ tools surfaced.
 - `internal/build/cache.go`: prune logic — LRU by `created_at`,
   cross-references `state.json::nodes[].build_revision` to refuse deletion
   of in-use builds (FR-018). Dirty-build entries (those with `+dirty-`
-  suffix) are pruned more aggressively (TTL 7 days default) since they're
-  inherently disposable.
+  suffix) are pruned more aggressively (configurable `build.cache.dirty_ttl`
+  / `--cache-dirty-ttl`, default 7 days, `never` accepted — FR-025).
+  During prune, manifest entries pointing at missing artifacts (e.g., user
+  manually deleted a JAR) are also removed (FR-020 cleanup branch).
 - MCP tools (`internal/mcp/tools_build.go`): expose `build`, `build_list`,
   `build_inspect`, `build_prune` with annotations per FR-013:
   - `build`: `idempotentHint=true`, `destructiveHint=false`
@@ -463,3 +572,30 @@ and Phase 4 (progress notifications, scp probe).
     passthrough) — all phases updated accordingly.
   - `pull_policy: never` made explicit for local-built docker images.
   - SSH progress notifications for transfers > 50 MB.
+- **2026-05-08 (self-review pass 2)**: Applied 12-item second review.
+  - **Security hardening**: dedicated "Security boundary" section; argv-
+    only subprocess invocation (no `bash -c`); FR-022 token regex on
+    gradle task + args; FR-019 narrows `build.env` to a fixed allowlist
+    (`GRADLE_OPTS|JAVA_OPTS|GRADLE_USER_HOME|MAVEN_OPTS|ORG_GRADLE_PROJECT_*`).
+  - **Cache correctness**: cache key now includes
+    `BuilderImageDigest` + `GradleArgs` (FR-002 pass 2). On-disk naming
+    `<sha>-b<digest6>[+dirty-<patchsha8>]`. Cache lookup also stats the
+    artifact (FR-020) so a manually-deleted JAR triggers a real rebuild.
+  - **Distribution**: `builder_image_digests.json` is now `go:embed`-ed
+    (FR-024); `--builder-image-override` is documented as escape hatch
+    only and participates in the cache key.
+  - **SIGINT extended to SSH** (FR-016): scp writes `.tmp` and renames;
+    cancellation tries best-effort remote cleanup.
+  - **Audit log shape**: FR-023 fixes a concrete event JSON for build
+    operations.
+  - **Source path resolution**: FR-021 distinguishes CLI (CWD) vs intent
+    (intent-file dir) relative-path resolution.
+  - **Preflight**: FR-017 builder-image probe is now offline-friendly
+    (warning on missing-and-offline, not hard fail).
+  - **New flags**: `--gradle-arg` repeatable (FR-001); cache dirty TTL
+    via `build.cache.dirty_ttl` or `--cache-dirty-ttl` (FR-025, default
+    7d, `never` accepted).
+  - **Integration test**: build-tag gated test runs real
+    `eclipse-temurin:8-jdk` against a hello-world gradle project.
+  - Phase / total estimate unchanged at ~9-10 days; pass 2 fixes are
+    additions to existing phases, not new phases.
