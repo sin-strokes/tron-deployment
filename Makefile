@@ -41,7 +41,7 @@ endif
 
 GOFLAGS    ?=
 
-.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates sync-schemas snapshot-schema-baseline update-render-golden docs man cover vuln bootstrap-go
+.PHONY: build test lint e2e build-all clean clean-all fmt vet tidy sync-templates sync-schemas snapshot-schema-baseline update-render-golden refresh-builder-pins docs man cover vuln bootstrap-go
 
 ## bootstrap-go: Download + verify the project-local Go toolchain
 ##               (idempotent; safe to re-run; no-op if already current)
@@ -163,3 +163,10 @@ snapshot-schema-baseline: $(GO_BOOTSTRAP)
 update-render-golden: $(GO_BOOTSTRAP)
 	TROND_UPDATE_GOLDEN=1 $(GO) test -run TestRenderHOCON_Golden ./internal/render/
 	@echo "render golden files refreshed under internal/render/testdata/golden/."
+
+## refresh-builder-pins: Re-resolve Eclipse Temurin tags → sha256 digests
+##                       and rewrite internal/build/pins/builder_image_digests.json.
+##                       Run at trond release-prep so the binary ships current
+##                       digests. Requires docker + jq on PATH. spec/002 FR-012.
+refresh-builder-pins:
+	@./scripts/refresh-builder-pins.sh
