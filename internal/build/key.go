@@ -29,22 +29,28 @@ type CacheKey struct {
 
 // String produces the on-disk cache key:
 //
-//	<sha>-b<digest6>[+dirty-<patch8>]
+//	<git-sha-12>-b<digest-8>[+dirty-<patch-8>][-x<extra-8>]
 //
-// digest6 is the first 6 hex chars of BuilderImageDigest's sha256
-// portion (or, for overrides, of the sha256 of the override string).
+// Lengths are sized so cosmic-ray collisions stay implausible across
+// a single user's cache (rarely > 10k entries):
+//
+//   - 12 hex git prefix → 48 bits, matches git's --abbrev=12 default
+//   - 8 hex digest prefix → 32 bits; bumping a pin gives a distinct key
+//   - 8 hex patch prefix → 32 bits; per-dirty-edit variant key
+//   - 8 hex extra prefix → 32 bits; folds non-default JDK/task/args
 //
 // Examples:
 //
-//	8f4e2a3c...-bd4e2a1
-//	8f4e2a3c...-bd4e2a1+dirty-7f2a3b9c
+//	8f4e2a3c1234-bd4e2a1c
+//	8f4e2a3c1234-bd4e2a1c+dirty-7f2a3b9c
+//	8f4e2a3c1234-bd4e2a1c-xa1b2c3d4
 func (k CacheKey) String() string {
 	if k.GitRevision == "" {
 		// Cache key invariant; let the caller surface the error.
 		return "INVALID"
 	}
 	d := k.digestPrefix()
-	base := fmt.Sprintf("%s-b%s", k.GitRevision[:short(k.GitRevision, 7)], d)
+	base := fmt.Sprintf("%s-b%s", k.GitRevision[:short(k.GitRevision, 12)], d)
 	if k.PatchHash != "" {
 		base = fmt.Sprintf("%s+dirty-%s", base, k.PatchHash[:short(k.PatchHash, 8)])
 	}
@@ -86,10 +92,10 @@ func (k CacheKey) extraFold() string {
 	h := sha256.New()
 	fmt.Fprintf(h, "jdk=%s\nkind=%s\ntask=%s\nargs=%s\n",
 		jdk, kind, task, strings.Join(args, "\x00"))
-	return hex.EncodeToString(h.Sum(nil))[:6]
+	return hex.EncodeToString(h.Sum(nil))[:8]
 }
 
-// digestPrefix extracts the 6-hex-char "build identity" portion of
+// digestPrefix extracts the 8-hex-char "build identity" portion of
 // BuilderImageDigest. For canonical pinned digests
 // (`sha256:abc...`) it's the prefix of the sha. For overrides (an
 // arbitrary ref@digest string) we hash the whole string so the cache
@@ -97,11 +103,11 @@ func (k CacheKey) extraFold() string {
 func (k CacheKey) digestPrefix() string {
 	d := k.BuilderImageDigest
 	if strings.HasPrefix(d, "sha256:") {
-		return d[7:short(d, 13)]
+		return d[7:short(d, 15)]
 	}
 	// Override path: hash the whole thing for stable prefixing.
 	h := sha256.Sum256([]byte(d))
-	return hex.EncodeToString(h[:])[:6]
+	return hex.EncodeToString(h[:])[:8]
 }
 
 func short(s string, n int) int {

@@ -15,7 +15,8 @@
 //	manifest.go  — per-build JSON manifest (FR-004)
 //	cache.go     — lookup / save / artifact stat (FR-020)
 //	audit.go     — two-phase build event lifecycle (FR-023)
-//	builder.go   — Builder interface + docker + host impls
+//	runner.go    — dockerRunner interface + real exec impl (testability)
+//	builder.go   — Run() orchestrator; flow split into resolve / build / finalize
 //
 // The exported surface is intentionally small — cmd/build.go calls
 // `Run`, apply integration calls `Run`, MCP calls `Run`. Everything
@@ -27,7 +28,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -72,47 +72,112 @@ type Result struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+// resolved is the internal carrier between phases. Each helper takes
+// what it needs and returns the next step's input. Keeps Run()
+// readable.
+type resolved struct {
+	req         Request
+	src         Source
+	imageRef    string
+	imageDigest string
+	key         CacheKey
+	cacheKeyStr string
+}
+
 // Run executes (or cache-hits) a build for the given request. The
 // returned Result is what cmd/build.go emits as JSON; on failure a
 // structured *output.StructuredError is returned with the appropriate
 // error_code so the wire envelope matches the CLI/MCP contract.
 //
-// Lifecycle:
+// Lifecycle (each step is its own helper so the flow stays readable
+// and individual phases are testable):
 //
-//  1. Validate inputs (gradle task / args / image_tag / env / pin
-//     resolution).
-//  2. Resolve git revision + dirty patch.
-//  3. Build the cache key. Stat the cache — hit returns immediately.
-//  4. Acquire the per-key flock (FR-015).
-//  5. Re-check cache (another caller might have built while we waited).
-//  6. Append `in_progress` audit event (FR-023).
-//  7. Run gradle inside the container (FR-022 argv-only).
-//  8. Verify produced artifact (FR-011).
-//  9. Persist manifest, emit terminal audit event.
+//  1. Validate + resolve (resolveBuild).
+//  2. Cache fast path (no lock).
+//  3. Acquire flock and re-check (FR-015).
+//  4. Audit `in_progress` (FR-023).
+//  5. Execute gradle in container (executeBuild).
+//  6. Validate the produced artifact (FR-011).
+//  7. Promote .tmp → final, persist manifest, audit terminal event.
 //
-// SIGINT propagation: ctx is honored by every subprocess. The cleanup
-// defer kills any in-flight container and removes partial output.
+// SIGINT propagation: ctx is honored by every subprocess. Partial
+// output is cleaned up before any error return.
 func Run(ctx context.Context, req Request) (*Result, error) {
 	started := time.Now()
 
+	r, err := resolveBuild(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := EnsureCacheDirs(); err != nil {
+		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
+			"ensure cache dirs: %s", err.Error())
+	}
+
+	// Fast path: cheap stat, no lock.
+	if hit, _ := Lookup(r.key); hit != nil && hit.Hit {
+		return resultFromManifest(hit.Manifest, true, time.Since(started).Milliseconds()), nil
+	}
+
+	// Serialize same-key concurrent builds (FR-015).
+	release, lockErr := AcquireCacheLock(CacheDir(), r.cacheKeyStr)
+	if lockErr != nil {
+		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
+			"acquire build lock: %s", lockErr.Error())
+	}
+	defer release()
+
+	// Re-check after lock — winner of the race may have finished.
+	if hit, _ := Lookup(r.key); hit != nil && hit.Hit {
+		return resultFromManifest(hit.Manifest, true, time.Since(started).Milliseconds()), nil
+	}
+
+	_ = AppendAuditEvent(PhaseInProgress, r.cacheKeyStr, "", started)
+
+	if r.req.ArtifactKind != "jar" {
+		_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, "NOT_IMPLEMENTED", started)
+		return nil, output.NewErrorf("NOT_IMPLEMENTED", output.ExitGeneralError,
+			"artifact=%s is not yet supported by Phase 1 (jar only)", r.req.ArtifactKind)
+	}
+
+	manifest, err := buildJAR(ctx, r, started)
+	if err != nil {
+		// Audit + propagate. The buildJAR helper has already done
+		// best-effort cleanup of .tmp output.
+		var se *output.StructuredError
+		if errors.As(err, &se) {
+			_ = AppendAuditEvent(phaseFromError(ctx, se.Code), r.cacheKeyStr, se.Code, started)
+			return nil, se
+		}
+		_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, "BUILD_FAILED", started)
+		return nil, output.NewErrorf("BUILD_FAILED", output.ExitGeneralError,
+			"gradle build failed: %s", err.Error())
+	}
+
+	_ = AppendAuditEvent(PhaseSuccess, r.cacheKeyStr, "", started)
+	return resultFromManifest(manifest, false, manifest.DurationMs), nil
+}
+
+// resolveBuild handles steps 1-2 from the lifecycle: defaults +
+// validation, builder image pin resolution, git revision resolution,
+// cache key materialization.
+func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 	req = req.withDefaults()
 	if err := req.validate(); err != nil {
 		return nil, err
 	}
 
-	// Resolve pinned builder image (FR-024 + cache key).
 	imageRef, imageDigest, ok := pins.Resolve(req.JDKVersion, req.BuilderImageOverride)
 	if !ok {
 		return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
 			"no pinned builder image for JDK version %q (available: %v)",
 			req.JDKVersion, pins.Versions()).
 			WithSuggestions(
-				"Use one of " + strings.Join(pins.Versions(), ", "),
+				"Use one of "+strings.Join(pins.Versions(), ", "),
 				"Or pass --builder-image-override <ref@sha256:...>",
 			)
 	}
 
-	// Resolve source revision.
 	src := Source{Path: req.SourcePath, RevisionSpec: req.RevisionSpec}
 	if err := src.Resolve(ctx); err != nil {
 		return nil, output.NewErrorf("INVALID_SOURCE", output.ExitValidationError,
@@ -132,59 +197,34 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 		GradleTask:         req.GradleTask,
 		GradleArgs:         append([]string(nil), req.GradleArgs...),
 	}
-	cacheKeyStr := key.String()
+	return &resolved{
+		req:         req,
+		src:         src,
+		imageRef:    imageRef,
+		imageDigest: imageDigest,
+		key:         key,
+		cacheKeyStr: key.String(),
+	}, nil
+}
 
-	if err := EnsureCacheDirs(); err != nil {
-		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
-			"ensure cache dirs: %s", err.Error())
-	}
-
-	// Fast path: check before locking. Cheap.
-	if hit, _ := Lookup(key); hit != nil && hit.Hit {
-		return resultFromManifest(hit.Manifest, true, time.Since(started).Milliseconds()), nil
-	}
-
-	// Serialize same-key concurrent builds (FR-015).
-	release, lockErr := AcquireCacheLock(CacheDir(), cacheKeyStr)
-	if lockErr != nil {
-		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
-			"acquire build lock: %s", lockErr.Error())
-	}
-	defer release()
-
-	// Re-check after lock acquisition — winner of the race may have
-	// finished while we were waiting.
-	if hit, _ := Lookup(key); hit != nil && hit.Hit {
-		return resultFromManifest(hit.Manifest, true, time.Since(started).Milliseconds()), nil
-	}
-
-	// Audit `in_progress` so a crash mid-build leaves a trail (FR-023).
-	_ = AppendAuditEvent(PhaseInProgress, cacheKeyStr, "", started)
-
-	if req.ArtifactKind != "jar" {
-		// Phase 3 owns the image path. Surface a clear error in Phase 1.
-		_ = AppendAuditEvent(PhaseFailed, cacheKeyStr, "NOT_IMPLEMENTED", started)
-		return nil, output.NewErrorf("NOT_IMPLEMENTED", output.ExitGeneralError,
-			"artifact=%s is not yet supported by Phase 1 (jar only)", req.ArtifactKind)
-	}
-
+// buildJAR runs gradle for artifact_kind=jar, validates the produced
+// JAR (FR-011), promotes it to the final name, and persists the
+// manifest. Best-effort cleanup of partial output on any error path.
+func buildJAR(ctx context.Context, r *resolved, started time.Time) (*Manifest, error) {
 	outDir := filepath.Join(CacheDir(), "out")
-	outFinal := filepath.Join(outDir, cacheKeyStr+".jar")
+	outFinal := filepath.Join(outDir, r.cacheKeyStr+".jar")
 	outTmp := outFinal + ".tmp"
 
-	// Best-effort cleanup of stale .tmp from a prior cancelled run.
-	_ = os.Remove(outTmp)
+	_ = os.Remove(outTmp) // stale .tmp from a prior cancelled run
 
-	res, runErr := runDockerBuild(ctx, req, imageRef, outDir, outTmp)
+	runErr := defaultRunner.RunDockerBuild(ctx, r, outDir, outTmp)
 	if runErr != nil {
 		_ = os.Remove(outTmp)
 		if errors.Is(ctx.Err(), context.Canceled) {
-			_ = AppendAuditEvent(PhaseCancelled, cacheKeyStr, "BUILD_CANCELLED", started)
 			return nil, output.NewErrorf("BUILD_CANCELLED", 130,
 				"build cancelled by user").
 				WithSuggestions("Re-run when ready; cached partial output has been cleaned")
 		}
-		_ = AppendAuditEvent(PhaseFailed, cacheKeyStr, "BUILD_FAILED", started)
 		return nil, output.NewErrorf("BUILD_FAILED", output.ExitGeneralError,
 			"gradle build failed: %s", runErr.Error()).
 			WithSuggestions(
@@ -193,142 +233,60 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 			)
 	}
 
-	// Validate the produced JAR before declaring success (FR-011).
 	const fullNodeMain = "org.tron.program.FullNode"
 	if err := ValidateJARMainClass(outTmp, fullNodeMain); err != nil {
 		_ = os.Remove(outTmp)
-		_ = AppendAuditEvent(PhaseFailed, cacheKeyStr, "INVALID_ARTIFACT", started)
 		return nil, output.NewErrorf("INVALID_ARTIFACT", output.ExitGeneralError,
 			"produced JAR is not a java-tron node: %s", err.Error()).
 			WithSuggestions(
-				fmt.Sprintf("Verify the gradle task '%s' is the shadow-jar target for FullNode", req.GradleTask),
+				fmt.Sprintf("Verify the gradle task '%s' is the shadow-jar target for FullNode", r.req.GradleTask),
 				"Override with --gradle-task if the source uses a different task name",
 			)
 	}
 
-	// Atomic move from .tmp to final. Cache hit checks always see a
-	// complete file or no file.
 	if err := os.Rename(outTmp, outFinal); err != nil {
-		_ = AppendAuditEvent(PhaseFailed, cacheKeyStr, "INTERNAL_ERROR", started)
 		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
 			"finalize artifact: %s", err.Error())
 	}
 
+	sum, err := fileSHA256(outFinal)
+	if err != nil {
+		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
+			"hash artifact: %s", err.Error())
+	}
+
 	manifest := &Manifest{
-		CacheKey:           cacheKeyStr,
-		SourcePath:         src.Path,
-		SourceRevision:     src.ResolvedRevision,
-		PatchHash:          src.PatchHash,
-		Dirty:              src.DirtyState,
-		BuilderImage:       imageRef,
-		BuilderImageDigest: imageDigest,
-		JDKVersion:         req.JDKVersion,
+		CacheKey:           r.cacheKeyStr,
+		SourcePath:         r.src.Path,
+		SourceRevision:     r.src.ResolvedRevision,
+		PatchHash:          r.src.PatchHash,
+		Dirty:              r.src.DirtyState,
+		BuilderImage:       r.imageRef,
+		BuilderImageDigest: r.imageDigest,
+		JDKVersion:         r.req.JDKVersion,
 		ArtifactKind:       "jar",
 		ArtifactPath:       outFinal,
-		SHA256:             res.SHA256,
-		GradleTask:         req.GradleTask,
-		GradleArgs:         req.GradleArgs,
-		Builder:            req.Builder,
+		SHA256:             sum,
+		GradleTask:         r.req.GradleTask,
+		GradleArgs:         r.req.GradleArgs,
+		Builder:            r.req.Builder,
 		DurationMs:         time.Since(started).Milliseconds(),
 		CreatedAt:          time.Now().UTC(),
 	}
 	if err := Save(manifest); err != nil {
-		_ = AppendAuditEvent(PhaseFailed, cacheKeyStr, "INTERNAL_ERROR", started)
 		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
 			"persist manifest: %s", err.Error())
 	}
-	_ = AppendAuditEvent(PhaseSuccess, cacheKeyStr, "", started)
-
-	return resultFromManifest(manifest, false, manifest.DurationMs), nil
+	return manifest, nil
 }
 
-// dockerRunResult is the small contract between Run and the
-// container driver. Kept here (not in builder.go's public surface) so
-// future builders (host gradle, ssh build server) can return the same
-// shape.
-type dockerRunResult struct {
-	SHA256 string
-}
-
-// runDockerBuild does the actual `docker run eclipse-temurin ...`
-// invocation. Argv-only — no `bash -c` — per FR-022 to keep
-// gradle_task / gradle_args injection-safe.
-func runDockerBuild(ctx context.Context, req Request, imageRef, outDir, outTmp string) (*dockerRunResult, error) {
-	if req.Builder == "host" {
-		// Phase 1: host builder is hooked in skeleton form so cmd
-		// flag parsing works, but the body is deferred to Phase 5
-		// since the docker path is enough to validate the contract.
-		return nil, fmt.Errorf("--builder host not implemented in Phase 1 (use docker)")
+// phaseFromError maps a structured error code to the right audit
+// phase. Cancellation is distinct from generic failure.
+func phaseFromError(ctx context.Context, code string) AuditPhase {
+	if code == "BUILD_CANCELLED" || errors.Is(ctx.Err(), context.Canceled) {
+		return PhaseCancelled
 	}
-
-	// Prepare env passthrough. ONLY allowlisted keys (FR-019).
-	envArgs := allowedEnvPassthrough(req.Env)
-
-	// Mount the source read-only and an output dir read-write. Gradle
-	// cache mounted separately so trond's container caches are
-	// isolated from the user's host ~/.gradle.
-	gradleCache := filepath.Join(CacheDir(), "gradle")
-
-	args := []string{
-		"run", "--rm",
-		"-v", req.SourcePath + ":/src:ro",
-		"-v", gradleCache + ":/root/.gradle",
-		"-v", outDir + ":/out:rw",
-		"--workdir", "/src",
-	}
-	for _, e := range envArgs {
-		args = append(args, "-e", e)
-	}
-	args = append(args, imageRef, "./gradlew", req.GradleTask)
-	args = append(args, req.GradleArgs...)
-	// Tell gradle to drop the jar into our mounted /out under the
-	// expected name. Argv-form: no shell interpretation of the path.
-	args = append(args, "-PoutputJarPath=/out/"+filepath.Base(outTmp))
-
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout = os.Stderr // surface progress to the user; stdout is reserved for JSON
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-
-	// Compute sha256 of the produced jar.
-	sum, err := fileSHA256(outTmp)
-	if err != nil {
-		return nil, fmt.Errorf("hash artifact: %w", err)
-	}
-	return &dockerRunResult{SHA256: sum}, nil
-}
-
-func allowedEnvPassthrough(intent map[string]string) []string {
-	// Forward host env (allowlist subset) first; intent.env overrides.
-	out := []string{}
-	for k := range envAllowlist {
-		if v, ok := os.LookupEnv(k); ok {
-			out = append(out, k+"="+v)
-		}
-	}
-	// ORG_GRADLE_PROJECT_* prefix from host.
-	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, orgGradleProjectPrefix) {
-			continue
-		}
-		out = append(out, e)
-	}
-	// Intent-provided env (already validated by ValidateEnvKey at
-	// parse time; defense in depth, re-check here).
-	keys := make([]string, 0, len(intent))
-	for k := range intent {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys) // deterministic order for reproducibility
-	for _, k := range keys {
-		if err := ValidateEnvKey(k); err != nil {
-			continue
-		}
-		out = append(out, k+"="+intent[k])
-	}
-	return out
+	return PhaseFailed
 }
 
 func (r Request) withDefaults() Request {
@@ -389,6 +347,44 @@ func (r Request) validate() error {
 		}
 	}
 	return nil
+}
+
+// allowedEnvPassthrough collects env vars to forward into the build
+// container. Two sources:
+//
+//  1. trond's invocation environment, filtered by the FR-019
+//     allowlist (so the developer's `GRADLE_OPTS=-Xmx4g` reaches
+//     gradle even when not declared in intent).
+//  2. The intent's `build.env: { KEY: VALUE }` map, also allowlisted.
+//
+// Intent values override host values on key collision (last writer
+// wins in docker's `-e`). Output is sorted for reproducible argv.
+func allowedEnvPassthrough(intent map[string]string) []string {
+	out := []string{}
+	for k := range envAllowlist {
+		if v, ok := os.LookupEnv(k); ok {
+			out = append(out, k+"="+v)
+		}
+	}
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, orgGradleProjectPrefix) {
+			continue
+		}
+		out = append(out, e)
+	}
+	keys := make([]string, 0, len(intent))
+	for k := range intent {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := ValidateEnvKey(k); err != nil {
+			continue
+		}
+		out = append(out, k+"="+intent[k])
+	}
+	sort.Strings(out)
+	return out
 }
 
 func resultFromManifest(m *Manifest, hit bool, duration int64) *Result {

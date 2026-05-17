@@ -16,9 +16,9 @@ func TestCacheKey_NamingShape(t *testing.T) {
 		GradleTask:         "shadowJar",
 	}
 	got := k.String()
-	// 7-char git prefix + `-b` + 6-char digest prefix; no `+dirty`
+	// 12-char git prefix + `-b` + 8-char digest prefix; no `+dirty`
 	// because PatchHash empty; no `-x` because all defaults.
-	want := "8f4e2a3-bd4e2a1"
+	want := "8f4e2a3c1234-bd4e2a1ab"
 	if got != want {
 		t.Errorf("CacheKey.String() = %q; want %q", got, want)
 	}

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 )
@@ -166,35 +167,42 @@ func ValidateJARMainClass(path, expected string) error {
 	return fmt.Errorf("jar has no META-INF/MANIFEST.MF")
 }
 
-func scanManifestMainClass(r interface {
-	Read([]byte) (int, error)
-}) (string, error) {
-	scanner := bufio.NewScanner(bufioReader(r))
+// scanManifestMainClass extracts the Main-Class value from a JAR
+// manifest. Honors the JAR-manifest spec's line-continuation rule:
+// values longer than 72 bytes wrap to the next line with a leading
+// single space, and the continuation belongs to the previous header.
+//
+// Without continuation handling, a long FQN like
+// `com.example.really.long.package.path.MainClass` would be split
+// across two lines and the validator would compare against only the
+// first half. java-tron's current `org.tron.program.FullNode` is too
+// short to trigger this, but the manifest spec is the manifest spec.
+func scanManifestMainClass(r io.Reader) (string, error) {
+	scanner := bufio.NewScanner(r)
 	const prefix = "Main-Class:"
+	var (
+		building string // value being accumulated (only set when we're inside Main-Class)
+		found    bool
+	)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix)), nil
+		switch {
+		case strings.HasPrefix(line, " ") && found:
+			// Continuation line — append (without the leading space).
+			building += strings.TrimPrefix(line, " ")
+		case strings.HasPrefix(line, prefix):
+			building = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			found = true
+		case found:
+			// A different header began; Main-Class is complete.
+			return building, nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("scan manifest: %w", err)
 	}
-	return "", fmt.Errorf("manifest has no Main-Class header")
-}
-
-// bufioReader wraps an io.Reader-ish into a bufio-friendly type.
-// Kept simple to avoid pulling io into the validator surface.
-func bufioReader(r interface {
-	Read([]byte) (int, error)
-}) *bufioReaderAdapter {
-	return &bufioReaderAdapter{r: r}
-}
-
-type bufioReaderAdapter struct {
-	r interface {
-		Read([]byte) (int, error)
+	if !found {
+		return "", fmt.Errorf("manifest has no Main-Class header")
 	}
+	return building, nil
 }
-
-func (b *bufioReaderAdapter) Read(p []byte) (int, error) { return b.r.Read(p) }

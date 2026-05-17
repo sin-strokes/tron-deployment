@@ -21,7 +21,7 @@
     "cache_key": {
       "type": "string",
       "description": "Content-addressed identifier of this build. Format: <git-sha7>-b<digest6>[+dirty-<patch8>][-x<extra6>]. Same source + same builder image + same task + same args yields the same key.",
-      "pattern": "^[0-9a-f]+-b[0-9a-f]{6}(\\+dirty-[0-9a-f]{8})?(-x[0-9a-f]{6})?$"
+      "pattern": "^[0-9a-f]{12}-b[0-9a-f]{8}(\\+dirty-[0-9a-f]{8})?(-x[0-9a-f]{8})?$"
     },
     "source_revision": {
       "type": "string",
