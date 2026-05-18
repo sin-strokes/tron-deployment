@@ -74,6 +74,13 @@ func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir,
 		// the script (FR-022 defense in depth).
 		"-e", "OUT_NAME=" + filepath.Base(outTmp),
 	}
+	// --platform routes to the matching variant of the multi-arch
+	// builder image. On a cross-arch combination docker uses QEMU
+	// emulation (binfmt-misc); 3-5× slower but functional. Required
+	// for the java-tron compat matrix: amd64+JDK8 vs arm64+JDK17.
+	if r.req.Platform != "" {
+		args = append(args, "--platform", r.req.Platform)
+	}
 	for _, e := range allowedEnvPassthrough(r.req.Env) {
 		args = append(args, "-e", e)
 	}

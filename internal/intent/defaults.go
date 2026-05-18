@@ -3,6 +3,7 @@ package intent
 import (
 	"fmt"
 	"net"
+	"runtime"
 )
 
 // anyNodeHasBuild reports whether any node in the slice declares a
@@ -32,6 +33,42 @@ func DefaultRuntime(intent *Intent) string {
 		return "jar"
 	}
 	return "docker"
+}
+
+// DefaultPlatform returns the docker `--platform` string for the
+// trond binary's host architecture, used as the default for
+// build.platform when the user hasn't specified one. Mirrors
+// Go's runtime.GOARCH → docker convention:
+//
+//	amd64 / 386       → linux/amd64
+//	arm64             → linux/arm64
+//	other (ppc64le…)  → linux/amd64 (most-likely supported)
+func DefaultPlatform() string {
+	switch runtime.GOARCH {
+	case "arm64":
+		return "linux/arm64"
+	default:
+		return "linux/amd64"
+	}
+}
+
+// DefaultJDKForPlatform returns the java-tron-supported JDK version
+// for the given docker platform string. Per upstream java-tron's
+// compatibility matrix:
+//
+//	linux/amd64 → JDK 8  (only legacy-tested combo on Intel)
+//	linux/arm64 → JDK 17 (only version with mature arm64 JIT + the
+//	                      tested compat matrix)
+//
+// Users override via `build.jdk:` explicitly; this default is what
+// trond picks when the field is empty.
+func DefaultJDKForPlatform(platform string) string {
+	switch platform {
+	case "linux/arm64":
+		return "17"
+	default:
+		return "8"
+	}
 }
 
 // ApplyDefaults fills in default values for fields not explicitly set in the intent.
@@ -178,8 +215,17 @@ func applyNodeDefaults(node *NodeSpec) {
 		if node.Build.Revision == "" {
 			node.Build.Revision = "HEAD"
 		}
+		// Platform defaults to host arch; JDK then defaults based on
+		// the (possibly-overridden) platform per java-tron's compat
+		// matrix. The order matters: if a user wrote platform but
+		// not JDK, we pick the matching JDK; if user wrote JDK but
+		// not platform, we pick host platform and don't second-guess
+		// their JDK.
+		if node.Build.Platform == "" {
+			node.Build.Platform = DefaultPlatform()
+		}
 		if node.Build.JDK == "" {
-			node.Build.JDK = "8"
+			node.Build.JDK = DefaultJDKForPlatform(node.Build.Platform)
 		}
 		if node.Build.Artifact == "" {
 			node.Build.Artifact = "jar"

@@ -41,7 +41,12 @@ nodes:
       # Adjust to wherever your java-tron checkout lives.
       source: ../java-tron
       revision: HEAD
-      jdk: "8"
+      # Platform + JDK both default to the host's arch:
+      #   amd64 host → linux/amd64 + JDK 8
+      #   arm64 host → linux/arm64 + JDK 17
+      # Per java-tron's compat matrix — the supported combo for each
+      # arch is picked automatically. Override either explicitly to
+      # cross-build (uses QEMU emulation on a mismatched host).
       artifact: jar
       gradle_args:
         - --no-daemon

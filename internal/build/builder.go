@@ -51,6 +51,11 @@ type Request struct {
 	ImageTag             string // for artifact=image
 	BuilderImageOverride string // FR-024 escape hatch
 	Env                  map[string]string
+	// Platform is the docker --platform argument ("linux/amd64" or
+	// "linux/arm64"). Empty defaults to host arch. Used to
+	// cross-build the JAR that java-tron actually supports on a
+	// given target architecture (amd64 → JDK 8, arm64 → JDK 17).
+	Platform string
 }
 
 // Result is the JSON-serializable success payload. Mirrors
@@ -196,6 +201,7 @@ func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 		ArtifactKind:       req.ArtifactKind,
 		GradleTask:         req.GradleTask,
 		GradleArgs:         append([]string(nil), req.GradleArgs...),
+		Platform:           req.Platform,
 	}
 	return &resolved{
 		req:         req,
@@ -290,8 +296,16 @@ func phaseFromError(ctx context.Context, code string) AuditPhase {
 }
 
 func (r Request) withDefaults() Request {
+	// Platform must default before JDK so the JDK choice can follow
+	// the platform (per java-tron's compat matrix: amd64=8, arm64=17).
+	// We keep this in sync with intent.DefaultJDKForPlatform — both
+	// surfaces produce the same effective Request whether the caller
+	// went through intent.Parse or constructed Request directly.
+	if r.Platform == "" {
+		r.Platform = defaultPlatformForHost()
+	}
 	if r.JDKVersion == "" {
-		r.JDKVersion = "8"
+		r.JDKVersion = defaultJDKForPlatform(r.Platform)
 	}
 	if r.ArtifactKind == "" {
 		r.ArtifactKind = "jar"

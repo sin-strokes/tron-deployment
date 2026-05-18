@@ -209,6 +209,20 @@ type BuildSpec struct {
 	// GRADLE_USER_HOME, MAVEN_OPTS, ORG_GRADLE_PROJECT_*). Values are
 	// shell-safe under argv (FR-022).
 	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+
+	// Platform selects the builder container's CPU architecture
+	// (`linux/amd64`, `linux/arm64`). Empty defaults to the host's
+	// arch via intent.DefaultPlatform. Set explicitly to cross-build
+	// against the java-tron platform matrix:
+	//
+	//   linux/amd64 → JDK 8  (only combo java-tron supports on Intel)
+	//   linux/arm64 → JDK 17 (only combo java-tron supports on ARM)
+	//
+	// Building a different arch from the host (e.g. amd64 from an M1
+	// Mac) works via docker's QEMU emulation — 3-5× slower but
+	// functional. Two builds with different platforms coexist in the
+	// cache (Platform participates in the cache key).
+	Platform string `yaml:"platform,omitempty" json:"platform,omitempty" validate:"omitempty,oneof=linux/amd64 linux/arm64"`
 }
 
 // JarSource tells trond where (and how) to fetch the java-tron jar for a

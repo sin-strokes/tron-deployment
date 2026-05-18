@@ -111,8 +111,11 @@ nodes:
 // downstream consumers see canonical values. Build's own
 // withDefaults() still owns the source of truth; the two stay in
 // lockstep via this test.
+//
+// Platform is set explicitly so the JDK default is deterministic
+// across host architectures (arch-aware defaults are covered in
+// TestParse_BuildJDKDefaultsByPlatform).
 func TestParse_BuildAppliesDefaults(t *testing.T) {
-	// Minimal build block — only source provided.
 	data := []byte(`
 name: dev-fullnode
 network: nile
@@ -123,6 +126,7 @@ nodes:
   - type: fullnode
     build:
       source: /tmp/java-tron
+      platform: linux/amd64
 `)
 	i, err := Parse(data)
 	if err != nil {
@@ -136,7 +140,7 @@ nodes:
 		t.Errorf("Revision default = %q; want HEAD", b.Revision)
 	}
 	if b.JDK != "8" {
-		t.Errorf("JDK default = %q; want 8", b.JDK)
+		t.Errorf("JDK default = %q; want 8 (platform=linux/amd64)", b.JDK)
 	}
 	if b.Artifact != "jar" {
 		t.Errorf("Artifact default = %q; want jar", b.Artifact)
@@ -146,6 +150,74 @@ nodes:
 	}
 	if b.GradleTask != "shadowJar" {
 		t.Errorf("GradleTask default = %q; want shadowJar (artifact=jar)", b.GradleTask)
+	}
+	if b.Platform != "linux/amd64" {
+		t.Errorf("Platform = %q; want linux/amd64 (preserved as written)", b.Platform)
+	}
+}
+
+// TestParse_BuildJDKDefaultsByPlatform pins the java-tron compat
+// matrix: amd64 → JDK 8, arm64 → JDK 17. The platform field drives
+// the JDK default; users get the supported combo without writing
+// either field explicitly (when host arch happens to match the
+// target arch).
+func TestParse_BuildJDKDefaultsByPlatform(t *testing.T) {
+	cases := []struct {
+		platform string
+		wantJDK  string
+	}{
+		{"linux/amd64", "8"},
+		{"linux/arm64", "17"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.platform, func(t *testing.T) {
+			data := []byte(`
+name: x
+network: nile
+target:
+  type: local
+  runtime: jar
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      platform: ` + tc.platform + `
+`)
+			i, err := Parse(data)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if got := i.Nodes[0].Build.JDK; got != tc.wantJDK {
+				t.Errorf("platform=%s → JDK default = %q; want %q",
+					tc.platform, got, tc.wantJDK)
+			}
+		})
+	}
+}
+
+// TestParse_BuildPlatformDefaultsToHostArch asserts the platform
+// itself defaults when omitted — to the host arch's docker triple.
+// Test is host-arch-aware so it works on both amd64 and arm64 CI.
+func TestParse_BuildPlatformDefaultsToHostArch(t *testing.T) {
+	data := []byte(`
+name: x
+network: nile
+target:
+  type: local
+  runtime: jar
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got := i.Nodes[0].Build.Platform
+	expected := DefaultPlatform()
+	if got != expected {
+		t.Errorf("Platform default = %q; want %q (host arch)", got, expected)
 	}
 }
 

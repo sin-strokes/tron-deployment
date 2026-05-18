@@ -222,6 +222,11 @@
           "type": "object",
           "additionalProperties": { "type": "string" },
           "description": "Allowlisted env vars forwarded into the build container: GRADLE_OPTS, JAVA_OPTS, GRADLE_USER_HOME, MAVEN_OPTS, ORG_GRADLE_PROJECT_*."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["linux/amd64", "linux/arm64"],
+          "description": "Docker --platform for the builder container. Empty defaults to the host arch (amd64 → JDK 8, arm64 → JDK 17 per java-tron's compat matrix). Cross-arch builds use QEMU emulation (3-5× slower)."
         }
       }
     },

@@ -25,6 +25,7 @@ type CacheKey struct {
 	ArtifactKind       string // "jar" | "image"
 	GradleTask         string
 	GradleArgs         []string // already validated by ValidateGradleArgs
+	Platform           string   // docker --platform e.g. "linux/arm64"; empty = host default
 }
 
 // String produces the on-disk cache key:
@@ -63,9 +64,16 @@ func (k CacheKey) String() string {
 	return base
 }
 
-// extraFold returns "" when all build-shape inputs are the natural
-// default (jdk=8, artifact=jar, gradle_task=shadowJar, no args).
-// Otherwise it returns a short hash so different shapes don't collide.
+// extraFold returns "" when all build-shape inputs match the
+// canonical default profile (jdk=8, artifact=jar,
+// gradle_task=shadowJar, platform=linux/amd64, no args). Otherwise
+// returns a short hash so different shapes don't collide.
+//
+// The "canonical default" is fixed at JDK 8 + linux/amd64 so the
+// cache key is host-independent: an amd64 host and an arm64 host
+// running otherwise-identical commands produce different keys
+// because their platform differs, not because of a host-specific
+// notion of "default".
 func (k CacheKey) extraFold() string {
 	jdk := k.JDKVersion
 	if jdk == "" {
@@ -84,14 +92,19 @@ func (k CacheKey) extraFold() string {
 			task = "dockerBuild"
 		}
 	}
+	platform := k.Platform
+	if platform == "" {
+		platform = "linux/amd64"
+	}
 	args := append([]string(nil), k.GradleArgs...)
 	sort.Strings(args)
-	if jdk == "8" && kind == "jar" && task == "shadowJar" && len(args) == 0 {
+	if jdk == "8" && kind == "jar" && task == "shadowJar" &&
+		platform == "linux/amd64" && len(args) == 0 {
 		return ""
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "jdk=%s\nkind=%s\ntask=%s\nargs=%s\n",
-		jdk, kind, task, strings.Join(args, "\x00"))
+	fmt.Fprintf(h, "jdk=%s\nkind=%s\ntask=%s\nplatform=%s\nargs=%s\n",
+		jdk, kind, task, platform, strings.Join(args, "\x00"))
 	return hex.EncodeToString(h.Sum(nil))[:8]
 }
 
