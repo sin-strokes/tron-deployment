@@ -133,8 +133,13 @@ type BuildSummary struct {
 	// agent answer "what image built this?" without round-tripping
 	// through `trond build inspect`.
 	BuilderImage string `json:"builder_image,omitempty"`
-	CacheHit     bool   `json:"cache_hit"`
-	DurationMs   int64  `json:"duration_ms"`
+	// Platform + JDKVersion let an agent answer "is this the amd64
+	// JDK 8 build or the arm64 JDK 17 build?" inline. Both come from
+	// the build.Result manifest.
+	Platform   string `json:"platform,omitempty"`
+	JDKVersion string `json:"jdk_version,omitempty"`
+	CacheHit   bool   `json:"cache_hit"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 // Apply runs the deploy phase. Returns a Result on success or

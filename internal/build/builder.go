@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/tronprotocol/tron-deployment/internal/build/pins"
+	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
 )
 
@@ -72,6 +73,7 @@ type Result struct {
 	JDKVersion     string    `json:"jdk_version"`
 	GradleTask     string    `json:"gradle_task"`
 	Builder        string    `json:"builder"`
+	Platform       string    `json:"platform,omitempty"`
 	CacheHit       bool      `json:"cache_hit"`
 	DurationMs     int64     `json:"duration_ms"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -117,6 +119,13 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	if err := EnsureCacheDirs(); err != nil {
 		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
 			"ensure cache dirs: %s", err.Error())
+	}
+	// One-line stderr warning when the user explicitly picks a
+	// platform / JDK combo outside java-tron's published compat
+	// matrix. Not an error — power users on java-tron forks may have
+	// valid reasons. Just makes the silent mismatch visible.
+	if msg := matrixWarning(r.req.Platform, r.req.JDKVersion); msg != "" {
+		fmt.Fprintln(os.Stderr, "warning: "+msg)
 	}
 
 	// Fast path: cheap stat, no lock.
@@ -276,6 +285,7 @@ func buildJAR(ctx context.Context, r *resolved, started time.Time) (*Manifest, e
 		GradleTask:         r.req.GradleTask,
 		GradleArgs:         r.req.GradleArgs,
 		Builder:            r.req.Builder,
+		Platform:           r.req.Platform,
 		DurationMs:         time.Since(started).Milliseconds(),
 		CreatedAt:          time.Now().UTC(),
 	}
@@ -295,17 +305,37 @@ func phaseFromError(ctx context.Context, code string) AuditPhase {
 	return PhaseFailed
 }
 
+// matrixWarning returns a non-empty message when (platform, jdk) is
+// outside java-tron's published compat matrix:
+//
+//	linux/amd64 + JDK 8   ← matrix
+//	linux/arm64 + JDK 17  ← matrix
+//	anything else         ← warn (still allowed for forks/research)
+func matrixWarning(platform, jdk string) string {
+	expected := intent.DefaultJDKForPlatform(platform)
+	if expected == jdk {
+		return ""
+	}
+	return fmt.Sprintf(
+		"build.platform=%s + jdk=%s is outside java-tron's published "+
+			"compat matrix (expected jdk=%s); expect runtime failures "+
+			"unless your fork supports this combo",
+		platform, jdk, expected,
+	)
+}
+
 func (r Request) withDefaults() Request {
 	// Platform must default before JDK so the JDK choice can follow
 	// the platform (per java-tron's compat matrix: amd64=8, arm64=17).
-	// We keep this in sync with intent.DefaultJDKForPlatform — both
-	// surfaces produce the same effective Request whether the caller
-	// went through intent.Parse or constructed Request directly.
+	// Defer to intent's canonical helpers so the rule lives in
+	// exactly one place — both surfaces (Parse → ApplyDefaults and
+	// direct Request construction) produce identical effective
+	// values.
 	if r.Platform == "" {
-		r.Platform = defaultPlatformForHost()
+		r.Platform = intent.DefaultPlatform()
 	}
 	if r.JDKVersion == "" {
-		r.JDKVersion = defaultJDKForPlatform(r.Platform)
+		r.JDKVersion = intent.DefaultJDKForPlatform(r.Platform)
 	}
 	if r.ArtifactKind == "" {
 		r.ArtifactKind = "jar"
@@ -414,6 +444,7 @@ func resultFromManifest(m *Manifest, hit bool, duration int64) *Result {
 		JDKVersion:     m.JDKVersion,
 		GradleTask:     m.GradleTask,
 		Builder:        m.Builder,
+		Platform:       m.Platform,
 		CacheHit:       hit,
 		DurationMs:     duration,
 		CreatedAt:      m.CreatedAt,

@@ -40,13 +40,13 @@ nodes:
     build:
       # Adjust to wherever your java-tron checkout lives.
       source: ../java-tron
-      revision: HEAD
-      # Platform + JDK both default to the host's arch:
-      #   amd64 host → linux/amd64 + JDK 8
-      #   arm64 host → linux/arm64 + JDK 17
-      # Per java-tron's compat matrix — the supported combo for each
-      # arch is picked automatically. Override either explicitly to
-      # cross-build (uses QEMU emulation on a mismatched host).
-      artifact: jar
+      # Everything else defaults sensibly:
+      #   revision: HEAD
+      #   platform: <host arch>     (amd64 → linux/amd64, arm64 → linux/arm64)
+      #   jdk:      <matching JDK>  (amd64 → 8, arm64 → 17 — java-tron matrix)
+      #   artifact: jar
+      #   builder:  docker
+      # Override any of them explicitly to cross-build (uses QEMU
+      # emulation on a mismatched host — 3-5× slower but functional).
       gradle_args:
         - --no-daemon

@@ -68,6 +68,8 @@ func resolveBuild(
 		ImageTag:       res.ImageTag,
 		SHA256:         res.SHA256,
 		BuilderImage:   res.BuilderImage,
+		Platform:       res.Platform,
+		JDKVersion:     res.JDKVersion,
 		CacheHit:       res.CacheHit,
 		DurationMs:     res.DurationMs,
 	}

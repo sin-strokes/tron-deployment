@@ -3,7 +3,7 @@
   "entries": [
     {
       "name": "apply",
-      "hash": "2bb1884de1f137cd9ecd23977db22f3f545730012c6b7ae011b3d4e1d437ee2a"
+      "hash": "cef5ef5836418d685d454ba43ef914118636363b92595d75b5f32c1e23071f7a"
     },
     {
       "name": "auto-heal",
@@ -11,7 +11,7 @@
     },
     {
       "name": "build",
-      "hash": "ea90d08461ac088e8535dc68cb410e7ce2ae0b6071c5329f07ba8aa2f2884be2"
+      "hash": "96bd53e568420ac6e5149abab4fcc16a0d4e6f50e16c611f1828e8d0e11708f2"
     },
     {
       "name": "config-diff",
