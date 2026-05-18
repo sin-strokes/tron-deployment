@@ -78,6 +78,50 @@ func TestCacheKey_GradleArgsChangesKey(t *testing.T) {
 	}
 }
 
+// TestCacheKey_PlatformChangesKey is the regression guard for the
+// arch-aware build feature: two builds with the same source / JDK /
+// task but different platforms (linux/amd64 vs linux/arm64) MUST
+// produce different cache keys so the cache holds both JARs
+// concurrently. Otherwise the second build would overwrite the
+// first.
+func TestCacheKey_PlatformChangesKey(t *testing.T) {
+	base := CacheKey{
+		GitRevision:        "8f4e2a3c1234567890abcdef1234567890abcdef",
+		BuilderImageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		JDKVersion:         "8",
+		ArtifactKind:       "jar",
+		GradleTask:         "shadowJar",
+		Platform:           "linux/amd64",
+	}
+	other := base
+	other.Platform = "linux/arm64"
+	if base.String() == other.String() {
+		t.Fatal("different platforms must produce different cache keys")
+	}
+}
+
+// TestCacheKey_PlatformLinuxAmd64IsCanonical: the canonical default
+// shape (jdk=8, jar, shadowJar, no args, linux/amd64) MUST produce
+// no `-x` suffix. Anything else (incl. linux/arm64) gets folded.
+func TestCacheKey_PlatformLinuxAmd64IsCanonical(t *testing.T) {
+	canonical := CacheKey{
+		GitRevision:        "8f4e2a3c1234567890abcdef1234567890abcdef",
+		BuilderImageDigest: "sha256:d4e2a1abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234",
+		JDKVersion:         "8",
+		ArtifactKind:       "jar",
+		GradleTask:         "shadowJar",
+		Platform:           "linux/amd64",
+	}
+	if got := canonical.String(); strings.Contains(got, "-x") {
+		t.Errorf("canonical defaults should NOT have -x suffix; got %q", got)
+	}
+	armKey := canonical
+	armKey.Platform = "linux/arm64"
+	if got := armKey.String(); !strings.Contains(got, "-x") {
+		t.Errorf("non-canonical platform should produce -x suffix; got %q", got)
+	}
+}
+
 // TestCacheKey_OverrideDigestStable asserts that an override path
 // (--builder-image-override) still produces a stable, deterministic
 // 6-char prefix in the cache key.

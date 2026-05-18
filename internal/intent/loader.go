@@ -303,6 +303,61 @@ func Validate(intent *Intent) error {
 		}
 	}
 
+	// Build vs Image vs Jar mutual exclusion (spec/002 FR-005).
+	// `build:` produces the artifact; `image:` references a pre-built
+	// docker image; `jar:` fetches a pre-built JAR. A node may carry
+	// at most one source.
+	for i, n := range intent.Nodes {
+		sources := 0
+		if n.Build != nil {
+			sources++
+		}
+		if n.Image != "" {
+			sources++
+		}
+		if n.Jar != nil {
+			sources++
+		}
+		if sources > 1 {
+			return fmt.Errorf("nodes[%d]: build, image, jar are mutually exclusive — pick one source", i)
+		}
+		if n.Build != nil && n.Build.Artifact == "image" && n.Build.ImageTag == "" {
+			return fmt.Errorf("nodes[%d]: build.image_tag is required when build.artifact = image", i)
+		}
+		// runtime + build.artifact compatibility. Catch this at
+		// validate time so `trond config validate` fails fast, not
+		// later in apply. Phase 2 wires only jar+jar end-to-end;
+		// Phase 3 will land jar+image's compose-side hookup and lift
+		// the docker+image restriction below.
+		//
+		// Validate runs BEFORE ApplyDefaults so intent.Target.Runtime
+		// may still be "". DefaultRuntime is the shared rule
+		// ApplyDefaults itself uses, so this check sees the same
+		// effective runtime an apply call would.
+		if n.Build != nil {
+			rt := intent.Target.Runtime
+			if rt == "" {
+				rt = DefaultRuntime(intent)
+			}
+			artifact := n.Build.Artifact
+			if artifact == "" {
+				artifact = "jar"
+			}
+			switch {
+			case rt == "docker" && artifact == "jar":
+				return fmt.Errorf("nodes[%d]: target.runtime=docker requires build.artifact=image (Phase 3 work); set target.runtime=jar or omit it (build intents default to jar)", i)
+			case rt == "jar" && artifact == "image":
+				return fmt.Errorf("nodes[%d]: target.runtime=jar cannot consume build.artifact=image — set artifact to jar or switch runtime", i)
+			case rt == "docker" && artifact == "image":
+				// Phase 3 will wire this into compose. For now, fail
+				// at validate time instead of letting apply hit a
+				// NOT_IMPLEMENTED inside the build pipeline — same
+				// fail-fast principle as the other two branches.
+				return fmt.Errorf("nodes[%d]: build.artifact=image is Phase 3 work (not yet wired into the docker runtime); use build.artifact=jar with target.runtime=jar for now", i)
+			}
+		}
+	}
+
 	// Witness nodes need a key source. Accept either the legacy top-level
 	// witness_key_env shortcut or the structured witness_key block. Both
 	// values are validated to be ENV var names (not raw hex keys) so a

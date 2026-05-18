@@ -27,7 +27,8 @@ type Manifest struct {
 	SHA256             string    `json:"sha256,omitempty"`        // for jar
 	GradleTask         string    `json:"gradle_task"`
 	GradleArgs         []string  `json:"gradle_args,omitempty"`
-	Builder            string    `json:"builder"` // "docker" | "host"
+	Builder            string    `json:"builder"`            // "docker" | "host"
+	Platform           string    `json:"platform,omitempty"` // "linux/amd64" | "linux/arm64"
 	DurationMs         int64     `json:"duration_ms"`
 	CreatedAt          time.Time `json:"created_at"`
 }

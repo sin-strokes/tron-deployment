@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -110,13 +111,12 @@ func runApply(cmd *cobra.Command, args []string) error {
 		TemplateDir:    findTemplatesDir(),
 		DeploymentsDir: deploymentsDir(),
 		EnvVars:        resolveEnvVars(&parsed.Nodes[0]),
+		IntentPath:     applyIntentPath, // FR-021: relative build.source resolves vs this
 		Wait:           applyWait,
 		WaitTimeout:    applyWaitTimeout,
 	})
 	if err != nil {
-		return exitWithError("DEPLOY_ERROR", output.ExitGeneralError, err.Error(),
-			"Check Docker is running: docker info",
-			"Check port availability")
+		return wrapApplyError(err)
 	}
 
 	// 8. Translate Result back into the JSON shape the CLI promises.
@@ -137,6 +137,9 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 	if res.ConfigHash != "" {
 		resultMap["config_hash"] = res.ConfigHash
+	}
+	if res.Build != nil {
+		resultMap["build"] = res.Build
 	}
 
 	writeAudit(auditEvent{
@@ -220,4 +223,29 @@ func exitWithError(code string, exitCode int, msg string, suggestions ...string)
 // command's RunE before reaching this helper.
 func writeResult(result any) {
 	output.WriteJSON(os.Stdout, result)
+}
+
+// wrapApplyError decides whether an error from apply.Apply needs
+// wrapping for the user-facing error envelope. Errors that are
+// already *output.StructuredError (BUILD_FAILED, INVALID_SOURCE,
+// BUILD_CANCELLED, VALIDATION_ERROR, etc.) propagate as-is so the
+// agent sees the correct error_code + exit_code. Everything else
+// (raw fmt.Errorf from the deploy plumbing) becomes a generic
+// DEPLOY_ERROR.
+//
+// Extracted so the wrap/pass-through decision is unit-testable
+// without spinning up a full cobra apply path.
+func wrapApplyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var se *output.StructuredError
+	if errors.As(err, &se) {
+		return se
+	}
+	return output.NewError("DEPLOY_ERROR", output.ExitGeneralError, err.Error()).
+		WithSuggestions(
+			"Check Docker is running: docker info",
+			"Check port availability",
+		)
 }

@@ -31,6 +31,7 @@ var (
 	buildBuilder       string
 	buildImageTag      string
 	buildImageOverride string
+	buildPlatform      string
 )
 
 var buildCmd = &cobra.Command{
@@ -81,6 +82,9 @@ func init() {
 		"Image tag to apply when --artifact=image (e.g. mytest:dev)")
 	buildCmd.Flags().StringVar(&buildImageOverride, "builder-image-override", "",
 		"Override the pinned builder image (escape hatch; see FR-024)")
+	buildCmd.Flags().StringVar(&buildPlatform, "platform", "",
+		"Docker --platform for the builder container (linux/amd64 or linux/arm64). "+
+			"Empty = host arch. Cross-arch builds use QEMU emulation.")
 	rootCmd.AddCommand(buildCmd)
 }
 
@@ -107,6 +111,7 @@ func runBuild(cmd *cobra.Command, _ []string) error {
 		Builder:              buildBuilder,
 		ImageTag:             buildImageTag,
 		BuilderImageOverride: buildImageOverride,
+		Platform:             buildPlatform,
 	}
 
 	// SIGINT-aware context. Build container + git subprocesses all

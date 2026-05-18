@@ -64,6 +64,11 @@
       "type": "string",
       "enum": ["docker", "host"]
     },
+    "platform": {
+      "type": "string",
+      "enum": ["linux/amd64", "linux/arm64"],
+      "description": "Docker --platform the builder ran under. Per java-tron's compat matrix: linux/amd64 → JDK 8, linux/arm64 → JDK 17."
+    },
     "cache_hit": {
       "type": "boolean",
       "description": "True when this invocation returned a previously-built artifact without re-running gradle."

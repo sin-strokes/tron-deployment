@@ -3,7 +3,73 @@ package intent
 import (
 	"fmt"
 	"net"
+	"runtime"
 )
+
+// anyNodeHasBuild reports whether any node in the slice declares a
+// `build:` block. Used by DefaultRuntime to choose runtime=jar
+// when the intent is configuring an inner-loop build (Phase 2).
+func anyNodeHasBuild(nodes []NodeSpec) bool {
+	for i := range nodes {
+		if nodes[i].Build != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultRuntime is the single source of truth for the runtime
+// default rule. ApplyDefaults uses it to fill intent.Target.Runtime;
+// intent.Validate uses it to derive the would-be effective runtime
+// when checking the build artifact/runtime mutex; apply.Apply uses
+// it as a last-resort fallback for programmatic callers that
+// bypass ApplyDefaults. Three sites, one rule.
+//
+// Rule: intents with any `build:` block default to "jar" (the only
+// Phase 2 wired path). Everything else stays on the legacy "docker"
+// default.
+func DefaultRuntime(intent *Intent) string {
+	if anyNodeHasBuild(intent.Nodes) {
+		return "jar"
+	}
+	return "docker"
+}
+
+// DefaultPlatform returns the docker `--platform` string for the
+// trond binary's host architecture, used as the default for
+// build.platform when the user hasn't specified one. Mirrors
+// Go's runtime.GOARCH → docker convention:
+//
+//	amd64 / 386       → linux/amd64
+//	arm64             → linux/arm64
+//	other (ppc64le…)  → linux/amd64 (most-likely supported)
+func DefaultPlatform() string {
+	switch runtime.GOARCH {
+	case "arm64":
+		return "linux/arm64"
+	default:
+		return "linux/amd64"
+	}
+}
+
+// DefaultJDKForPlatform returns the java-tron-supported JDK version
+// for the given docker platform string. Per upstream java-tron's
+// compatibility matrix:
+//
+//	linux/amd64 → JDK 8  (only legacy-tested combo on Intel)
+//	linux/arm64 → JDK 17 (only version with mature arm64 JIT + the
+//	                      tested compat matrix)
+//
+// Users override via `build.jdk:` explicitly; this default is what
+// trond picks when the field is empty.
+func DefaultJDKForPlatform(platform string) string {
+	switch platform {
+	case "linux/arm64":
+		return "17"
+	default:
+		return "8"
+	}
+}
 
 // ApplyDefaults fills in default values for fields not explicitly set in the intent.
 func ApplyDefaults(intent *Intent) {
@@ -12,7 +78,10 @@ func ApplyDefaults(intent *Intent) {
 		intent.Target.Port = 22
 	}
 	if intent.Target.Runtime == "" {
-		intent.Target.Runtime = "docker"
+		// Source of truth in DefaultRuntime; both intent.Validate and
+		// apply.Apply also consult that helper so the rule lives in
+		// exactly one place.
+		intent.Target.Runtime = DefaultRuntime(intent)
 	}
 	if intent.Target.IdentityFile == "" && intent.Target.Type == "ssh" {
 		intent.Target.IdentityFile = "~/.ssh/id_rsa"
@@ -120,7 +189,11 @@ func applyNodeDefaults(node *NodeSpec) {
 	if node.Version == "" {
 		node.Version = "latest"
 	}
-	if node.Image == "" {
+	// Skip the default Image when a Build block is present — they're
+	// mutually exclusive (FR-005). Otherwise the mutex check would
+	// fail on re-validation post-defaults, and worse: a docker
+	// runtime would try to pull an image trond doesn't intend to use.
+	if node.Image == "" && node.Build == nil {
 		node.Image = "tronprotocol/java-tron"
 	}
 	if node.InstallPath == "" {
@@ -131,6 +204,43 @@ func applyNodeDefaults(node *NodeSpec) {
 	}
 	if node.SystemUser == "" {
 		node.SystemUser = "tron"
+	}
+
+	// BuildSpec defaults. The build pipeline owns the canonical
+	// defaults (build.Request.withDefaults), but filling them here too
+	// makes `trond config validate --explain` surface them and keeps
+	// downstream consumers from having to re-derive the same values.
+	// Keep the two in lockstep.
+	if node.Build != nil {
+		if node.Build.Revision == "" {
+			node.Build.Revision = "HEAD"
+		}
+		// Platform defaults to host arch; JDK then defaults based on
+		// the (possibly-overridden) platform per java-tron's compat
+		// matrix. The order matters: if a user wrote platform but
+		// not JDK, we pick the matching JDK; if user wrote JDK but
+		// not platform, we pick host platform and don't second-guess
+		// their JDK.
+		if node.Build.Platform == "" {
+			node.Build.Platform = DefaultPlatform()
+		}
+		if node.Build.JDK == "" {
+			node.Build.JDK = DefaultJDKForPlatform(node.Build.Platform)
+		}
+		if node.Build.Artifact == "" {
+			node.Build.Artifact = "jar"
+		}
+		if node.Build.Builder == "" {
+			node.Build.Builder = "docker"
+		}
+		if node.Build.GradleTask == "" {
+			switch node.Build.Artifact {
+			case "jar":
+				node.Build.GradleTask = "shadowJar"
+			case "image":
+				node.Build.GradleTask = "dockerBuild"
+			}
+		}
 	}
 
 	// Feature defaults
