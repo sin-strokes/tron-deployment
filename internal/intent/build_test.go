@@ -330,6 +330,64 @@ nodes:
 	}
 }
 
+// TestParse_BuildDockerImageNowAccepted is the Phase 3 unlock
+// regression guard. Phase 2 rejected `runtime: docker +
+// artifact: image` because the compose render path didn't know
+// about locally-built images. Phase 3 wires it in: the same intent
+// must now parse + validate cleanly.
+func TestParse_BuildDockerImageNowAccepted(t *testing.T) {
+	data := []byte(`
+name: dev-fullnode
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build:dev
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse should now accept docker+image: %v", err)
+	}
+	if i.Target.Runtime != "docker" {
+		t.Errorf("Target.Runtime = %q; want docker (explicit)", i.Target.Runtime)
+	}
+	if i.Nodes[0].Build.Artifact != "image" {
+		t.Errorf("Build.Artifact = %q; want image", i.Nodes[0].Build.Artifact)
+	}
+}
+
+// TestParse_BuildImageArtifactDefaultsRuntimeToDocker is the
+// inverse of TestParse_BuildDefaultsRuntimeToJar: when the user
+// declares artifact=image without an explicit target.runtime, the
+// runtime MUST default to docker (the artifact's only consumer).
+func TestParse_BuildImageArtifactDefaultsRuntimeToDocker(t *testing.T) {
+	data := []byte(`
+name: dev-fullnode
+network: nile
+target:
+  type: local
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build:dev
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if i.Target.Runtime != "docker" {
+		t.Errorf("Target.Runtime default = %q; want docker (artifact=image)",
+			i.Target.Runtime)
+	}
+}
+
 // TestParse_BuildInvalidJDK pins the validator-tag enum.
 func TestParse_BuildInvalidJDK(t *testing.T) {
 	data := []byte(`

@@ -345,15 +345,9 @@ func Validate(intent *Intent) error {
 			}
 			switch {
 			case rt == "docker" && artifact == "jar":
-				return fmt.Errorf("nodes[%d]: target.runtime=docker requires build.artifact=image (Phase 3 work); set target.runtime=jar or omit it (build intents default to jar)", i)
+				return fmt.Errorf("nodes[%d]: target.runtime=docker cannot consume build.artifact=jar — set build.artifact=image (the docker runtime path) or switch target.runtime=jar", i)
 			case rt == "jar" && artifact == "image":
 				return fmt.Errorf("nodes[%d]: target.runtime=jar cannot consume build.artifact=image — set artifact to jar or switch runtime", i)
-			case rt == "docker" && artifact == "image":
-				// Phase 3 will wire this into compose. For now, fail
-				// at validate time instead of letting apply hit a
-				// NOT_IMPLEMENTED inside the build pipeline — same
-				// fail-fast principle as the other two branches.
-				return fmt.Errorf("nodes[%d]: build.artifact=image is Phase 3 work (not yet wired into the docker runtime); use build.artifact=jar with target.runtime=jar for now", i)
 			}
 		}
 	}

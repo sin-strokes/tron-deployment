@@ -233,7 +233,10 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 
 	switch runtimeType {
 	case "docker":
-		deployOpts.ComposeData = []byte(render.RenderCompose(opts.Intent.Name, opts.Intent, node, "", jvmArgs))
+		// builtImageTag is non-empty when intent had `build:` with
+		// artifact: image — render against the local tag + emit
+		// pull_policy: never so compose doesn't pull from a registry.
+		deployOpts.ComposeData = []byte(render.RenderCompose(opts.Intent.Name, opts.Intent, node, "", jvmArgs, builtImageTag))
 		rt := runtime.NewDockerRuntime(opts.Target, opts.DeploymentsDir)
 		if err := rt.Deploy(ctx, deployOpts); err != nil {
 			return nil, fmt.Errorf("docker deploy: %w", err)
@@ -373,7 +376,7 @@ func validateOptions(o Options) error {
 		switch {
 		case rt == "docker" && artifact == "jar":
 			return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
-				"node %q: target.runtime=docker requires build.artifact=image (Phase 3 work); use target.runtime=jar for now", n.Type)
+				"node %q: target.runtime=docker cannot consume build.artifact=jar — set build.artifact=image (docker path) or switch target.runtime=jar", n.Type)
 		case rt == "jar" && artifact == "image":
 			return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
 				"node %q: target.runtime=jar cannot consume build.artifact=image — set build.artifact=jar or switch runtime", n.Type)

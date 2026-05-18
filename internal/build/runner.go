@@ -24,12 +24,13 @@ type dockerRunner interface {
 // realDockerRunner which shells out to the docker CLI.
 var defaultRunner dockerRunner = realDockerRunner{}
 
-// dockerBuildScript is the only piece of shell trond runs and it's
-// a compile-time constant. User input (gradle_task, gradle_args)
-// arrives through `"$@"` argv expansion AFTER `--`; output filename
-// arrives through an env var. Both channels are shell-quote-safe
-// independent of their contents. FR-022 holds: no path from user
-// input to shell metacharacter interpretation.
+// dockerBuildScript (JAR variant) is the only piece of shell trond
+// runs for artifact=jar and it's a compile-time constant. User input
+// (gradle_task, gradle_args) arrives through `"$@"` argv expansion
+// AFTER `--`; output filename arrives through an env var. Both
+// channels are shell-quote-safe independent of their contents.
+// FR-022 holds: no path from user input to shell metacharacter
+// interpretation.
 //
 // Why bash and not argv? Because the build produces files inside the
 // container's /src tree (gradle writes to build/libs/*.jar) and we
@@ -52,6 +53,21 @@ fi
 cp "$JAR" "/out/$OUT_NAME"
 `
 
+// dockerBuildScript_Image is the image-artifact variant. No file
+// copy step — gradle's docker plugin tags the produced image
+// directly into the host's docker daemon (which we expose by
+// bind-mounting /var/run/docker.sock into the container; see the
+// runner setup below). The post-build step that picks up the new
+// image ID lives in image.go::mostRecentlyCreatedImage on the host
+// side, NOT in this script.
+//
+// Same FR-022 invariant: user input flows through `"$@"`, no
+// interpolation. No OUT_NAME — the host side handles tagging.
+const dockerBuildScript_Image = `set -e
+cd /src
+./gradlew "$@"
+`
+
 type realDockerRunner struct{}
 
 func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir, outTmp string) error {
@@ -68,12 +84,29 @@ func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir,
 		// The user already gives gradle this access locally.
 		"-v", r.src.Path + ":/src:rw",
 		"-v", gradleCache + ":/root/.gradle",
-		"-v", outDir + ":/out:rw",
 		"--workdir", "/src",
-		// Output filename passed through env, not interpolated into
-		// the script (FR-022 defense in depth).
-		"-e", "OUT_NAME=" + filepath.Base(outTmp),
 	}
+
+	// Artifact-kind specific volume + env setup.
+	//
+	//   jar:   mount /out for the JAR copy step; thread $OUT_NAME so
+	//          the script knows what filename to drop in /out.
+	//   image: mount the host's docker socket into the builder
+	//          container so gradle's docker plugin can call back into
+	//          the host daemon to build + tag an image. No /out mount
+	//          needed — the image lives in the host's docker store
+	//          and host-side bookkeeping (image.go) records the tag
+	//          + ID via `docker inspect`.
+	switch r.req.ArtifactKind {
+	case "image":
+		args = append(args,
+			"-v", "/var/run/docker.sock:/var/run/docker.sock")
+	default:
+		args = append(args,
+			"-v", outDir+":/out:rw",
+			"-e", "OUT_NAME="+filepath.Base(outTmp))
+	}
+
 	// --platform routes to the matching variant of the multi-arch
 	// builder image. On a cross-arch combination docker uses QEMU
 	// emulation (binfmt-misc); 3-5× slower but functional. Required
@@ -84,7 +117,12 @@ func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir,
 	for _, e := range allowedEnvPassthrough(r.req.Env) {
 		args = append(args, "-e", e)
 	}
-	args = append(args, r.imageRef, "bash", "-c", dockerBuildScript, "--")
+
+	script := dockerBuildScript
+	if r.req.ArtifactKind == "image" {
+		script = dockerBuildScript_Image
+	}
+	args = append(args, r.imageRef, "bash", "-c", script, "--")
 	args = append(args, r.req.GradleTask)
 	args = append(args, r.req.GradleArgs...)
 

@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -57,10 +58,22 @@ func Lookup(key CacheKey) (*CacheHit, error) {
 			return nil, fmt.Errorf("stat cached artifact: %w", statErr)
 		}
 	case "image":
-		// Image artifacts are tracked via images/<key>.json. Phase 3
-		// fills this in; for Phase 1 we treat missing as miss.
-		if _, statErr := os.Stat(filepath.Join(CacheDir(), "images", key.String()+".json")); errors.Is(statErr, os.ErrNotExist) {
+		// Image artifacts are tracked via images/<key>.json. We also
+		// have to `docker image inspect` to confirm the local image
+		// is still in docker's store — a `docker system prune` or
+		// out-of-band `docker rmi` between trond runs would make the
+		// bookkeeping JSON point at nothing. (FR-020 cleanup branch.)
+		meta, metaErr := readImageMetadata(key.String())
+		if errors.Is(metaErr, os.ErrNotExist) {
 			_ = os.Remove(mp)
+			return &CacheHit{Hit: false}, nil
+		}
+		if metaErr != nil {
+			return nil, fmt.Errorf("read image metadata: %w", metaErr)
+		}
+		if !imageExistsLocally(context.Background(), meta.ImageID) {
+			_ = os.Remove(mp)
+			_ = os.Remove(filepath.Join(CacheDir(), "images", key.String()+".json"))
 			return &CacheHit{Hit: false}, nil
 		}
 	}

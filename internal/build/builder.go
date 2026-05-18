@@ -148,14 +148,19 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 
 	_ = AppendAuditEvent(PhaseInProgress, r.cacheKeyStr, "", started)
 
-	if r.req.ArtifactKind != "jar" {
-		_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, "NOT_IMPLEMENTED", started)
-		return nil, output.NewErrorf("NOT_IMPLEMENTED", output.ExitGeneralError,
-			"artifact=%s is not yet supported by Phase 1 (jar only)", r.req.ArtifactKind)
+	var manifest *Manifest
+	var artifactErr error
+	switch r.req.ArtifactKind {
+	case "jar":
+		manifest, artifactErr = buildJAR(ctx, r, started)
+	case "image":
+		manifest, artifactErr = buildImage(ctx, r, started)
+	default:
+		_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, "VALIDATION_ERROR", started)
+		return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+			"unknown artifact_kind %q (must be jar or image)", r.req.ArtifactKind)
 	}
-
-	manifest, err := buildJAR(ctx, r, started)
-	if err != nil {
+	if err := artifactErr; err != nil {
 		// Audit + propagate. The buildJAR helper has already done
 		// best-effort cleanup of .tmp output.
 		var se *output.StructuredError
