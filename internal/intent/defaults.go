@@ -6,7 +6,7 @@ import (
 )
 
 // anyNodeHasBuild reports whether any node in the slice declares a
-// `build:` block. Used by applyTargetDefaults to choose runtime=jar
+// `build:` block. Used by DefaultRuntime to choose runtime=jar
 // when the intent is configuring an inner-loop build (Phase 2).
 func anyNodeHasBuild(nodes []NodeSpec) bool {
 	for i := range nodes {
@@ -17,6 +17,23 @@ func anyNodeHasBuild(nodes []NodeSpec) bool {
 	return false
 }
 
+// DefaultRuntime is the single source of truth for the runtime
+// default rule. ApplyDefaults uses it to fill intent.Target.Runtime;
+// intent.Validate uses it to derive the would-be effective runtime
+// when checking the build artifact/runtime mutex; apply.Apply uses
+// it as a last-resort fallback for programmatic callers that
+// bypass ApplyDefaults. Three sites, one rule.
+//
+// Rule: intents with any `build:` block default to "jar" (the only
+// Phase 2 wired path). Everything else stays on the legacy "docker"
+// default.
+func DefaultRuntime(intent *Intent) string {
+	if anyNodeHasBuild(intent.Nodes) {
+		return "jar"
+	}
+	return "docker"
+}
+
 // ApplyDefaults fills in default values for fields not explicitly set in the intent.
 func ApplyDefaults(intent *Intent) {
 	// Target defaults
@@ -24,18 +41,10 @@ func ApplyDefaults(intent *Intent) {
 		intent.Target.Port = 22
 	}
 	if intent.Target.Runtime == "" {
-		// Spec/002 Phase 2: only artifact=jar is wired into the
-		// deploy runtime, and the docker compose path requires a
-		// concrete image. When an intent carries a `build:` block,
-		// default the runtime to jar so the most-common dev intent
-		// ("just point at my java-tron source") works without
-		// boilerplate. Phase 3 lifts this once artifact=image is
-		// wired into compose.
-		if anyNodeHasBuild(intent.Nodes) {
-			intent.Target.Runtime = "jar"
-		} else {
-			intent.Target.Runtime = "docker"
-		}
+		// Source of truth in DefaultRuntime; both intent.Validate and
+		// apply.Apply also consult that helper so the rule lives in
+		// exactly one place.
+		intent.Target.Runtime = DefaultRuntime(intent)
 	}
 	if intent.Target.IdentityFile == "" && intent.Target.Type == "ssh" {
 		intent.Target.IdentityFile = "~/.ssh/id_rsa"

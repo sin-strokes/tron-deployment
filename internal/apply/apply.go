@@ -210,7 +210,14 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 
 	runtimeType := opts.Intent.Target.Runtime
 	if runtimeType == "" {
-		runtimeType = "docker"
+		// cobra apply always pipes the intent through intent.Parse →
+		// ApplyDefaults, so Runtime should already be filled. This
+		// fallback covers programmatic callers (recipe, MCP, ad-hoc
+		// tests) that bypass ApplyDefaults — defer to the shared
+		// rule (intent.DefaultRuntime) so they get the same "docker
+		// unless build present → jar" behavior, not a silently
+		// drifted local default.
+		runtimeType = intent.DefaultRuntime(opts.Intent)
 	}
 
 	deployOpts := runtime.DeployOpts{

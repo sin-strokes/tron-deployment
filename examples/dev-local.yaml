@@ -21,8 +21,11 @@ network: nile
 
 target:
   type: local
-  runtime: jar
   auto_ports: true
+  # runtime: omitted on purpose. Build intents default to runtime=jar
+  # (Phase 2 wires only the jar artifact end-to-end); Phase 3 will lift
+  # this once `build.artifact: image` lands in the compose render path.
+  # Setting it explicitly here would just duplicate the default.
 
 nodes:
   - type: fullnode

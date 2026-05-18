@@ -326,18 +326,20 @@ func Validate(intent *Intent) error {
 		}
 		// runtime + build.artifact compatibility. Catch this at
 		// validate time so `trond config validate` fails fast, not
-		// later in apply. Phase 2 wires only artifact=jar end-to-end;
-		// Phase 3 will lift the docker+jar restriction.
+		// later in apply. Phase 2 wires only jar+jar end-to-end;
+		// Phase 3 will land jar+image's compose-side hookup and lift
+		// the docker+image restriction below.
+		//
+		// Validate runs BEFORE ApplyDefaults so intent.Target.Runtime
+		// may still be "". DefaultRuntime is the shared rule
+		// ApplyDefaults itself uses, so this check sees the same
+		// effective runtime an apply call would.
 		if n.Build != nil {
 			rt := intent.Target.Runtime
-			artifact := n.Build.Artifact
-			// Apply the same default-derivation that applyTargetDefaults
-			// uses, so this check sees the same effective values an
-			// apply call would. (Validate runs before ApplyDefaults so
-			// we can't trust the fields directly.)
 			if rt == "" {
-				rt = "jar" // build present → defaults to jar
+				rt = DefaultRuntime(intent)
 			}
+			artifact := n.Build.Artifact
 			if artifact == "" {
 				artifact = "jar"
 			}
@@ -346,6 +348,12 @@ func Validate(intent *Intent) error {
 				return fmt.Errorf("nodes[%d]: target.runtime=docker requires build.artifact=image (Phase 3 work); set target.runtime=jar or omit it (build intents default to jar)", i)
 			case rt == "jar" && artifact == "image":
 				return fmt.Errorf("nodes[%d]: target.runtime=jar cannot consume build.artifact=image — set artifact to jar or switch runtime", i)
+			case rt == "docker" && artifact == "image":
+				// Phase 3 will wire this into compose. For now, fail
+				// at validate time instead of letting apply hit a
+				// NOT_IMPLEMENTED inside the build pipeline — same
+				// fail-fast principle as the other two branches.
+				return fmt.Errorf("nodes[%d]: build.artifact=image is Phase 3 work (not yet wired into the docker runtime); use build.artifact=jar with target.runtime=jar for now", i)
 			}
 		}
 	}
