@@ -116,18 +116,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		WaitTimeout:    applyWaitTimeout,
 	})
 	if err != nil {
-		// Build pipeline and other internal layers already produce
-		// structured errors with the right error_code (BUILD_FAILED,
-		// INVALID_SOURCE, BUILD_CANCELLED, INVALID_ARTIFACT, etc.).
-		// Wrapping those in DEPLOY_ERROR would strip the specificity
-		// agents rely on.
-		var se *output.StructuredError
-		if errors.As(err, &se) {
-			return se
-		}
-		return exitWithError("DEPLOY_ERROR", output.ExitGeneralError, err.Error(),
-			"Check Docker is running: docker info",
-			"Check port availability")
+		return wrapApplyError(err)
 	}
 
 	// 8. Translate Result back into the JSON shape the CLI promises.
@@ -234,4 +223,29 @@ func exitWithError(code string, exitCode int, msg string, suggestions ...string)
 // command's RunE before reaching this helper.
 func writeResult(result any) {
 	output.WriteJSON(os.Stdout, result)
+}
+
+// wrapApplyError decides whether an error from apply.Apply needs
+// wrapping for the user-facing error envelope. Errors that are
+// already *output.StructuredError (BUILD_FAILED, INVALID_SOURCE,
+// BUILD_CANCELLED, VALIDATION_ERROR, etc.) propagate as-is so the
+// agent sees the correct error_code + exit_code. Everything else
+// (raw fmt.Errorf from the deploy plumbing) becomes a generic
+// DEPLOY_ERROR.
+//
+// Extracted so the wrap/pass-through decision is unit-testable
+// without spinning up a full cobra apply path.
+func wrapApplyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var se *output.StructuredError
+	if errors.As(err, &se) {
+		return se
+	}
+	return output.NewError("DEPLOY_ERROR", output.ExitGeneralError, err.Error()).
+		WithSuggestions(
+			"Check Docker is running: docker info",
+			"Check port availability",
+		)
 }

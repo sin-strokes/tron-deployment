@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/tronprotocol/tron-deployment/internal/intent"
+	"github.com/tronprotocol/tron-deployment/internal/output"
 	"github.com/tronprotocol/tron-deployment/internal/render"
 	"github.com/tronprotocol/tron-deployment/internal/runtime"
 	"github.com/tronprotocol/tron-deployment/internal/state"
@@ -127,8 +128,13 @@ type BuildSummary struct {
 	ArtifactPath   string `json:"artifact_path,omitempty"`
 	ImageTag       string `json:"image_tag,omitempty"`
 	SHA256         string `json:"sha256,omitempty"`
-	CacheHit       bool   `json:"cache_hit"`
-	DurationMs     int64  `json:"duration_ms"`
+	// BuilderImage records which pinned JDK builder produced this
+	// artifact (e.g. eclipse-temurin:8-jdk-jammy@sha256:...). Lets an
+	// agent answer "what image built this?" without round-tripping
+	// through `trond build inspect`.
+	BuilderImage string `json:"builder_image,omitempty"`
+	CacheHit     bool   `json:"cache_hit"`
+	DurationMs   int64  `json:"duration_ms"`
 }
 
 // Apply runs the deploy phase. Returns a Result on success or
@@ -333,7 +339,8 @@ func validateOptions(o Options) error {
 		sources++
 	}
 	if sources > 1 {
-		return fmt.Errorf("node %q: build, image, jar are mutually exclusive (pick one artifact source)", n.Type)
+		return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+			"node %q: build, image, jar are mutually exclusive (pick one artifact source)", n.Type)
 	}
 
 	// Phase 2 only wires artifact=jar end-to-end. The artifact_kind
@@ -345,7 +352,7 @@ func validateOptions(o Options) error {
 	if n.Build != nil {
 		rt := o.Intent.Target.Runtime
 		if rt == "" {
-			rt = "docker"
+			rt = "jar" // build present → defaults to jar (matches applyTargetDefaults)
 		}
 		artifact := n.Build.Artifact
 		if artifact == "" {
@@ -353,9 +360,11 @@ func validateOptions(o Options) error {
 		}
 		switch {
 		case rt == "docker" && artifact == "jar":
-			return fmt.Errorf("node %q: target.runtime=docker requires build.artifact=image (Phase 3 work); use target.runtime=jar for now", n.Type)
+			return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+				"node %q: target.runtime=docker requires build.artifact=image (Phase 3 work); use target.runtime=jar for now", n.Type)
 		case rt == "jar" && artifact == "image":
-			return fmt.Errorf("node %q: target.runtime=jar cannot consume build.artifact=image — set build.artifact=jar or switch runtime", n.Type)
+			return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+				"node %q: target.runtime=jar cannot consume build.artifact=image — set build.artifact=jar or switch runtime", n.Type)
 		}
 	}
 	return nil

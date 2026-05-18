@@ -75,6 +75,7 @@
         "artifact_path":   { "type": "string" },
         "image_tag":       { "type": "string" },
         "sha256":          { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "builder_image":   { "type": "string", "description": "Pinned JDK builder image reference (e.g. eclipse-temurin:8-jdk-jammy@sha256:...) used to produce this artifact." },
         "cache_hit":       { "type": "boolean" },
         "duration_ms":     { "type": "integer", "minimum": 0 }
       },

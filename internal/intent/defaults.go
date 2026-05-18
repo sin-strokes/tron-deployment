@@ -5,6 +5,18 @@ import (
 	"net"
 )
 
+// anyNodeHasBuild reports whether any node in the slice declares a
+// `build:` block. Used by applyTargetDefaults to choose runtime=jar
+// when the intent is configuring an inner-loop build (Phase 2).
+func anyNodeHasBuild(nodes []NodeSpec) bool {
+	for i := range nodes {
+		if nodes[i].Build != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // ApplyDefaults fills in default values for fields not explicitly set in the intent.
 func ApplyDefaults(intent *Intent) {
 	// Target defaults
@@ -12,7 +24,18 @@ func ApplyDefaults(intent *Intent) {
 		intent.Target.Port = 22
 	}
 	if intent.Target.Runtime == "" {
-		intent.Target.Runtime = "docker"
+		// Spec/002 Phase 2: only artifact=jar is wired into the
+		// deploy runtime, and the docker compose path requires a
+		// concrete image. When an intent carries a `build:` block,
+		// default the runtime to jar so the most-common dev intent
+		// ("just point at my java-tron source") works without
+		// boilerplate. Phase 3 lifts this once artifact=image is
+		// wired into compose.
+		if anyNodeHasBuild(intent.Nodes) {
+			intent.Target.Runtime = "jar"
+		} else {
+			intent.Target.Runtime = "docker"
+		}
 	}
 	if intent.Target.IdentityFile == "" && intent.Target.Type == "ssh" {
 		intent.Target.IdentityFile = "~/.ssh/id_rsa"

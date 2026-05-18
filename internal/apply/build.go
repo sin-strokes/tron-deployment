@@ -66,6 +66,7 @@ func resolveBuild(
 		ArtifactPath:   res.ArtifactPath,
 		ImageTag:       res.ImageTag,
 		SHA256:         res.SHA256,
+		BuilderImage:   res.BuilderImage,
 		CacheHit:       res.CacheHit,
 		DurationMs:     res.DurationMs,
 	}
