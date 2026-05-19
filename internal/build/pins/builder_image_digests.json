@@ -1,22 +1,34 @@
 {
-  "$comment": "Pinned digests for builder images. Bumped per trond release via `make refresh-builder-pins`. Each entry resolves jdk_version -> reference (canonical name@sha256:...). Cache key (FR-002) incorporates the digest so pin bumps invalidate stale artifacts.",
-  "schema_version": "1.0.0",
+  "$comment": "Pinned per-platform digests for builder images. Bumped per trond release via `make refresh-builder-pins`. Each entry resolves (jdk_version, platform) → per-arch image digest (NOT the multi-arch manifest list digest — pinning that and combining with `docker run --platform X` fails with `cannot overwrite digest`). Cache key (FR-002) incorporates the digest so pin bumps invalidate stale artifacts.",
+  "schema_version": "2.0.0",
   "pins": {
     "8": {
       "ref": "eclipse-temurin:8-jdk-jammy",
-      "digest": "sha256:f71b4cab6bfd7e6a9885ff38a58ea20ecd1300bea3955a3af465ebafa020a5b3"
+      "platforms": {
+        "linux/amd64": "sha256:d0861e686aa44dcca542877aaedf7d276762cc5c85a072dfdf2391b7defc4f08",
+        "linux/arm64": "sha256:4fafd08ae76dd19018977ef5305645bb1890c37960c3960918808edc39639d68"
+      }
     },
     "11": {
       "ref": "eclipse-temurin:11-jdk-jammy",
-      "digest": "sha256:32328038107fc34200f15c2ab3e8e7767e76db9c999101385b2cff3e12cd4f59"
+      "platforms": {
+        "linux/amd64": "sha256:438387f7ae2612d0460e22810bd5083feece787affb9962d629ef19090a4fb99",
+        "linux/arm64": "sha256:8000ac16e6b8ce3fa02d908e7835780d74e238b84fd740cad3d384422be1bb16"
+      }
     },
     "17": {
       "ref": "eclipse-temurin:17-jdk-jammy",
-      "digest": "sha256:beabb759e6f9653c843958d1d1f5cecb881dfb85aa6081e2bef099ab1260344e"
+      "platforms": {
+        "linux/amd64": "sha256:004fc99f69bf9179d055d24b1b779e68d6d807fd7b4e23654d3a2aa82c397894",
+        "linux/arm64": "sha256:23300419b10ee0f16ce5afdf42ed4480fbcc1ec8cc280dd459f57c0654cee274"
+      }
     },
     "21": {
       "ref": "eclipse-temurin:21-jdk-jammy",
-      "digest": "sha256:801b7e1a9c4befaf82bf9a2a58025ef43a7694bbc84779187ad0524d84742772"
+      "platforms": {
+        "linux/amd64": "sha256:3de48ab8a55f9a8503a7add21387c31b29f14030895292dd648f0b9353a4091d",
+        "linux/arm64": "sha256:ce99a60f0c16989c7fb83ae4e7bdae870ff7575f9f7e573993776450aed50e1b"
+      }
     }
   }
 }

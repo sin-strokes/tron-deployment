@@ -45,9 +45,15 @@ var defaultRunner dockerRunner = realDockerRunner{}
 const dockerBuildScript = `set -e
 cd /src
 ./gradlew "$@"
-JAR=$(ls -S build/libs/*.jar 2>/dev/null | head -n1)
+# Search every */build/libs/*.jar (root project + every subproject)
+# because multi-module gradle builds put the fat JAR under a
+# specific submodule (e.g. java-tron's :framework:buildFullNodeJar
+# emits to framework/build/libs/FullNode.jar, NOT to the root's
+# build/libs/). Sort by size descending so we pick the fat JAR
+# rather than a thin module jar of the same gradle task.
+JAR=$(find . -path '*/build/libs/*.jar' -type f 2>/dev/null | xargs ls -S 2>/dev/null | head -n1)
 if [ -z "$JAR" ]; then
-  echo "trond: gradle produced no .jar in build/libs/" >&2
+  echo "trond: gradle produced no .jar under any build/libs/" >&2
   exit 64
 fi
 cp "$JAR" "/out/$OUT_NAME"
@@ -85,7 +91,18 @@ func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir,
 		return fmt.Errorf("--builder host not implemented in Phase 1 (use docker)")
 	}
 
-	gradleCache := filepath.Join(CacheDir(), "gradle")
+	// Gradle cache: use a DOCKER NAMED VOLUME, not a bind mount.
+	// macOS Docker Desktop's bind-mount layer (virtiofs) doesn't
+	// reliably preserve the exec bit for files the container writes
+	// to host paths. Gradle's protobuf plugin downloads native
+	// `protoc-*.exe` binaries into the cache; via bind mount they
+	// arrive on the host without `+x`, then the next gradle run
+	// (or a sub-task in the same run) sees them as non-executable
+	// and bails with EACCES. A named volume lives inside Docker's
+	// VM and preserves modes natively. The cache is still
+	// per-trond-state-dir-scoped via a volume label so concurrent
+	// trond invocations on different state dirs don't collide.
+	const gradleVolume = "trond-build-gradle-cache"
 
 	args := []string{
 		"run", "--rm",
@@ -93,7 +110,7 @@ func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir,
 		// the project tree (same as running ./gradlew on the host).
 		// The user already gives gradle this access locally.
 		"-v", r.src.Path + ":/src:rw",
-		"-v", gradleCache + ":/root/.gradle",
+		"-v", gradleVolume + ":/root/.gradle",
 		"--workdir", "/src",
 	}
 

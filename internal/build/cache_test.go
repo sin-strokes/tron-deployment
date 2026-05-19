@@ -23,7 +23,7 @@ func TestEnsureCacheDirs(t *testing.T) {
 	if err := EnsureCacheDirs(); err != nil {
 		t.Fatalf("EnsureCacheDirs: %v", err)
 	}
-	for _, sub := range []string{"out", "images", "manifest", "locks", "gradle"} {
+	for _, sub := range []string{"out", "images", "manifest", "locks"} {
 		if _, err := os.Stat(filepath.Join(base, "builds", sub)); err != nil {
 			t.Errorf("expected %s/builds/%s to exist: %v", base, sub, err)
 		}

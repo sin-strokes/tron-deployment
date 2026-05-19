@@ -201,13 +201,23 @@ func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 		return nil, err
 	}
 
-	imageRef, imageDigest, ok := pins.Resolve(req.JDKVersion, req.BuilderImageOverride)
+	imageRef, imageDigest, ok := pins.Resolve(req.JDKVersion, req.Platform, req.BuilderImageOverride)
 	if !ok {
+		platforms := pins.Platforms(req.JDKVersion)
+		if len(platforms) == 0 {
+			return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+				"no pinned builder image for JDK version %q (available: %v)",
+				req.JDKVersion, pins.Versions()).
+				WithSuggestions(
+					"Use one of "+strings.Join(pins.Versions(), ", "),
+					"Or pass --builder-image-override <ref@sha256:...>",
+				)
+		}
 		return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
-			"no pinned builder image for JDK version %q (available: %v)",
-			req.JDKVersion, pins.Versions()).
+			"JDK %q has no pinned builder image for platform %q (supported: %v)",
+			req.JDKVersion, req.Platform, platforms).
 			WithSuggestions(
-				"Use one of "+strings.Join(pins.Versions(), ", "),
+				"Use one of platforms "+strings.Join(platforms, ", "),
 				"Or pass --builder-image-override <ref@sha256:...>",
 			)
 	}

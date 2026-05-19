@@ -19,7 +19,13 @@ func CacheDir() string {
 
 // EnsureCacheDirs creates the cache subdirectories. Idempotent.
 func EnsureCacheDirs() error {
-	for _, sub := range []string{"out", "images", "manifest", "locks", "gradle"} {
+	// Note: the gradle cache used to be a `gradle` bind-mounted
+	// subdir here, but macOS Docker Desktop strips the exec bit on
+	// files the container writes (breaks protoc + similar native
+	// helpers). The runner now binds a docker named volume
+	// (`trond-build-gradle-cache`) instead, so this dir list is
+	// only for host-side outputs (artifacts, manifests, locks).
+	for _, sub := range []string{"out", "images", "manifest", "locks"} {
 		p := filepath.Join(CacheDir(), sub)
 		if err := os.MkdirAll(p, 0o700); err != nil {
 			return fmt.Errorf("mkdir %s: %w", p, err)
