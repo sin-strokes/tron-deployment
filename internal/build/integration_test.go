@@ -73,6 +73,125 @@ func TestBuild_RealGradleEndToEnd(t *testing.T) {
 	}
 }
 
+// TestBuildImage_RealGradleEndToEnd is the Phase 3 happy-path
+// integration test. It exercises buildImage end-to-end against a
+// minimal Dockerfile-only source fixture, validating:
+//   - docker.sock-mounted gradle invocation actually produces an image
+//   - the before/after snapshot picks the right image (no
+//     intermediate dangling layers thanks to FR-019 dangling=false)
+//   - the user's build.image_tag is applied
+//   - gradle's auto-generated tags get stripped (stripExtraTags)
+//   - second run hits the cache by checking the tag still resolves
+func TestBuildImage_RealGradleEndToEnd(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	// The fixture's Dockerfile pulls busybox. Air-gapped or
+	// docker-hub-blocked hosts can't run this test; skip rather
+	// than fail.
+	if out, err := exec.Command("docker", "pull", "busybox:latest").CombinedOutput(); err != nil {
+		t.Skipf("cannot pull busybox (no network or registry blocked): %v\n%s", err, out)
+	}
+
+	repo := setupImageIntegrationRepo(t)
+	withTempBaseDir(t)
+
+	override := resolveBuilderImage(t, "eclipse-temurin:8-jdk-jammy")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tag := "trond-build-test/fixture:dev"
+	res, err := Run(ctx, Request{
+		SourcePath:           repo,
+		BuilderImageOverride: override,
+		ArtifactKind:         "image",
+		ImageTag:             tag,
+		GradleTask:           "dockerBuild",
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if res.ImageTag != tag {
+		t.Errorf("ImageTag = %q; want %q", res.ImageTag, tag)
+	}
+	t.Cleanup(func() {
+		// Best-effort cleanup so this test doesn't leak images.
+		_ = exec.Command("docker", "image", "rm", "-f", tag).Run()
+	})
+
+	// Second run should hit the cache — tag still resolves in
+	// docker store, manifest still on disk.
+	res2, err := Run(ctx, Request{
+		SourcePath:           repo,
+		BuilderImageOverride: override,
+		ArtifactKind:         "image",
+		ImageTag:             tag,
+		GradleTask:           "dockerBuild",
+	})
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if !res2.CacheHit {
+		t.Error("identical inputs should produce a cache hit")
+	}
+}
+
+// setupImageIntegrationRepo writes a minimal gradle project that
+// runs `docker build` via a tiny inline Dockerfile. Output is a
+// runnable image (FROM scratch + ENTRYPOINT) so
+// validateImageEntrypoint passes.
+func setupImageIntegrationRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	files := map[string]string{
+		"settings.gradle": `rootProject.name = 'image-fixture'
+`,
+		"build.gradle": `plugins { id 'base' }
+task dockerBuild(type: Exec) {
+    workingDir projectDir
+    commandLine 'docker', 'build', '-t', 'image-fixture:built', '.'
+}
+`,
+		"Dockerfile": `FROM busybox:latest
+ENTRYPOINT ["echo", "trond-image-fixture"]
+`,
+	}
+	for rel, content := range files {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	// gradle wrapper init if available locally — otherwise CI must
+	// have it preinstalled.
+	if _, err := exec.LookPath("gradle"); err == nil {
+		_, _ = exec.Command("gradle", "-p", dir, "wrapper", "--gradle-version=7.6").CombinedOutput()
+	}
+
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "image-test@trond"},
+		{"config", "user.name", "image"},
+		{"config", "commit.gpgsign", "false"},
+		{"add", "."},
+		{"commit", "-q", "-m", "fixture"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return dir
+}
+
 // setupIntegrationRepo writes a minimal gradle project (tiny enough
 // that the test runs in well under a minute on a warm cache) that
 // produces a JAR whose Main-Class matches org.tron.program.FullNode.

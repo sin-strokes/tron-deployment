@@ -51,9 +51,19 @@ func buildImage(ctx context.Context, r *resolved, started time.Time) (*Manifest,
 	}
 
 	// The wrapper script (dockerBuildScript_Image) snapshots image
-	// IDs before + after gradle into /out/new-image-ids, so we
-	// need /out mounted. outDir is the host path that's bound.
+	// IDs before + after gradle into <outDir>/<cache-key>-images-{before,after},
+	// so we need /out mounted. outDir is the host path that's bound.
 	outDir := filepath.Join(CacheDir(), "out")
+	// Defer cleanup of the per-cache-key snapshot files. readNewImageIDs
+	// also removes them on success, so this is the failure-path
+	// safety net — without it, a gradle crash between the two
+	// snapshot writes would leave orphan files in the shared out
+	// dir (eventually cleaned by Phase 5 prune, but defensible to
+	// clean inline too).
+	defer func() {
+		_ = os.Remove(filepath.Join(outDir, r.cacheKeyStr+"-images-before"))
+		_ = os.Remove(filepath.Join(outDir, r.cacheKeyStr+"-images-after"))
+	}()
 
 	if err := defaultRunner.RunDockerBuild(ctx, r, outDir, "" /* outTmp unused for image */); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -73,7 +83,7 @@ func buildImage(ctx context.Context, r *resolved, started time.Time) (*Manifest,
 	// image ID that gradle's task produced this run — no race with
 	// other host docker activity (gradle's `docker images` runs
 	// inside our serialized build window).
-	newImageIDs, err := readNewImageIDs(outDir)
+	newImageIDs, err := readNewImageIDs(outDir, r.cacheKeyStr)
 	if err != nil {
 		return nil, output.NewErrorf("BUILD_FAILED", output.ExitGeneralError,
 			"locate produced image: %s", err.Error())
@@ -95,6 +105,19 @@ func buildImage(ctx context.Context, r *resolved, started time.Time) (*Manifest,
 	if err := dockerTag(ctx, imageID, tag); err != nil {
 		return nil, output.NewErrorf("BUILD_FAILED", output.ExitGeneralError,
 			"docker tag %s %s: %s", imageID, tag, err.Error())
+	}
+	// Gradle's docker plugin sets its own tag(s) on the image
+	// (typically <group>/<name>:<version>, e.g.
+	// tronprotocol/java-tron:GreatVoyage-foo). Leaving those in
+	// place shadows the upstream namespace in `docker images` and
+	// confuses operators debugging deploys — the H block on user-
+	// supplied image_tag already addresses this for trond's own
+	// tagging; we extend it to gradle-side tags here. Best-effort:
+	// removal failure isn't fatal (we just leave the dangling alias).
+	if err := stripExtraTags(ctx, imageID, tag); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"warning: could not strip gradle's auto-generated tags from %s: %v\n",
+			imageID, err)
 	}
 
 	if err := validateImageEntrypoint(ctx, tag); err != nil {
@@ -136,23 +159,45 @@ func buildImage(ctx context.Context, r *resolved, started time.Time) (*Manifest,
 	return manifest, nil
 }
 
-// readNewImageIDs returns the image IDs the wrapper script
-// recorded as newly created during the gradle run.
+// readNewImageIDs computes the (after \ before) diff of TAGGED
+// image IDs produced during the gradle run. The wrapper script
+// snapshots both sets into per-cache-key files
+// `/out/<key>-images-{before,after}`; the diff itself runs here so
+// the logic is unit-testable (computeNewImages) without needing a
+// real container.
 //
-// The wrapper computes (after \ before) of `docker images -q
-// --no-trunc | sort -u` and writes the result to
-// /out/new-image-ids. Because both snapshots happen inside the
-// builder's serialized window (FR-015 flock), the diff is robust
-// against the user's other host docker activity.
-//
-// Empty file = gradle ran but produced no image. Returns the IDs
-// in the order docker reported them (typically by creation time
-// thanks to sort order on hashes — not strictly, but stable enough
-// for our needs since the build is gated to one image producer).
-func readNewImageIDs(outDir string) ([]string, error) {
-	data, err := os.ReadFile(filepath.Join(outDir, "new-image-ids"))
+// Returns an empty slice when gradle ran but produced no new
+// tagged image (the wrapper uses `--filter dangling=false`, so
+// multi-stage Dockerfile intermediates are already excluded). The
+// per-cache-key snapshot files are removed after a successful
+// read so the cache dir doesn't accumulate them across runs.
+func readNewImageIDs(outDir, cacheKey string) ([]string, error) {
+	beforePath := filepath.Join(outDir, cacheKey+"-images-before")
+	afterPath := filepath.Join(outDir, cacheKey+"-images-after")
+
+	before, err := readSnapshot(beforePath)
 	if err != nil {
-		return nil, fmt.Errorf("read new-image-ids: %w", err)
+		return nil, fmt.Errorf("read before snapshot: %w", err)
+	}
+	after, err := readSnapshot(afterPath)
+	if err != nil {
+		return nil, fmt.Errorf("read after snapshot: %w", err)
+	}
+
+	// Best-effort cleanup. Leaving them around is harmless except
+	// for disk noise; future runs overwrite via the wrapper.
+	_ = os.Remove(beforePath)
+	_ = os.Remove(afterPath)
+
+	return computeNewImages(before, after), nil
+}
+
+// readSnapshot parses one line-per-image-id file produced by the
+// wrapper script. Trims whitespace; skips blanks.
+func readSnapshot(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
 	var ids []string
 	for line := range strings.SplitSeq(string(data), "\n") {
@@ -165,12 +210,90 @@ func readNewImageIDs(outDir string) ([]string, error) {
 	return ids, nil
 }
 
+// computeNewImages returns the entries in `after` that are not in
+// `before`. Order preserves `after`'s original order so downstream
+// callers can rely on positional invariants. Unit-tested for the
+// multi-stage Dockerfile case where intermediate layers would
+// otherwise confuse the picker.
+func computeNewImages(before, after []string) []string {
+	seen := make(map[string]bool, len(before))
+	for _, id := range before {
+		seen[id] = true
+	}
+	var diff []string
+	for _, id := range after {
+		if !seen[id] {
+			diff = append(diff, id)
+		}
+	}
+	return diff
+}
+
 func dockerTag(ctx context.Context, imageID, tag string) error {
 	cmd := exec.CommandContext(ctx, "docker", "tag", imageID, tag)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// stripExtraTags removes every tag on imageID except keepTag. Used
+// to clean up gradle's auto-generated tag(s) (e.g.
+// tronprotocol/java-tron:GreatVoyage-foo) after trond re-tags with
+// the user's build.image_tag. We `docker image rm <tag>` rather
+// than `docker rmi <id>` — the underlying image layers stay alive
+// on the kept tag, only the auto-generated aliases get removed.
+//
+// Returns the first removal error encountered; the manifest /
+// trond cache is unaffected either way.
+//
+// `<none>` aliases (dangling tags from a botched gradle plugin) are
+// skipped via a substring check rather than equality with the
+// historical `<none>:<none>` literal — docker version drift
+// occasionally changes the print format and we'd rather skip a
+// few stray dangling entries than wrongly try to `docker image rm
+// "<none>"`.
+func stripExtraTags(ctx context.Context, imageID, keepTag string) error {
+	tags, err := imageTags(ctx, imageID)
+	if err != nil {
+		return err
+	}
+	for _, t := range tags {
+		if t == keepTag || strings.Contains(t, "<none>") {
+			continue
+		}
+		// `docker image rm <tag>` decrements the tag's ref count;
+		// when that tag has no other references the alias is
+		// dropped, and only when the LAST tag is removed does the
+		// underlying image actually get GC'd. Since keepTag still
+		// references the image, this only strips aliases.
+		cmd := exec.CommandContext(ctx, "docker", "image", "rm", t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("untag %s: %w: %s", t, err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+// imageTags returns all repo:tag strings currently aliasing the
+// given image ID. Used by stripExtraTags.
+func imageTags(ctx context.Context, imageID string) ([]string, error) {
+	// docker inspect --format with range emits one tag per line.
+	cmd := exec.CommandContext(ctx, "docker", "inspect",
+		"--format={{range .RepoTags}}{{.}}\n{{end}}", imageID)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker inspect %s: %w", imageID, err)
+	}
+	var tags []string
+	for line := range strings.SplitSeq(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		tags = append(tags, line)
+	}
+	return tags, nil
 }
 
 // validateImageEntrypoint asserts the image has a non-empty

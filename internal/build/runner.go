@@ -60,18 +60,22 @@ cp "$JAR" "/out/$OUT_NAME"
 //
 // To robustly identify which image gradle just created — without
 // racing other docker activity on the host — we snapshot the set
-// of image IDs before AND after, then write the diff (newly-created
-// IDs) to /out/new-image-ids. The host-side image.go reads that
-// file rather than guessing via "most recently created".
+// of TAGGED image IDs (dangling=false filters out multi-stage
+// intermediate layers) before AND after the build, into
+// per-cache-key files so concurrent builds on different keys can't
+// clobber each other. The diff itself runs host-side in
+// computeNewImages (image.go) so it's unit-testable and doesn't
+// depend on GNU comm.
 //
 // Same FR-022 invariant: gradle args flow through "$@", no
-// interpolation of trond-side fields.
+// interpolation of trond-side fields. The cache key arrives via
+// $CACHE_KEY env (allowlisted to safe characters by FR-002's
+// content-addressed naming scheme).
 const dockerBuildScript_Image = `set -e
 cd /src
-docker images -q --no-trunc 2>/dev/null | sort -u > /out/images-before
+docker images -q --no-trunc --filter dangling=false 2>/dev/null | sort -u > "/out/$CACHE_KEY-images-before"
 ./gradlew "$@"
-docker images -q --no-trunc 2>/dev/null | sort -u > /out/images-after
-comm -13 /out/images-before /out/images-after > /out/new-image-ids
+docker images -q --no-trunc --filter dangling=false 2>/dev/null | sort -u > "/out/$CACHE_KEY-images-after"
 `
 
 type realDockerRunner struct{}
@@ -108,7 +112,11 @@ func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir,
 	switch r.req.ArtifactKind {
 	case "image":
 		args = append(args,
-			"-v", "/var/run/docker.sock:/var/run/docker.sock")
+			"-v", "/var/run/docker.sock:/var/run/docker.sock",
+			// Per-cache-key snapshot file names so concurrent builds
+			// on different keys can't clobber each other's
+			// before/after files in the shared /out dir.
+			"-e", "CACHE_KEY="+r.cacheKeyStr)
 	default:
 		args = append(args, "-e", "OUT_NAME="+filepath.Base(outTmp))
 	}
