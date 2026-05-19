@@ -349,6 +349,23 @@ func Validate(intent *Intent) error {
 			case rt == "jar" && artifact == "image":
 				return fmt.Errorf("nodes[%d]: target.runtime=jar cannot consume build.artifact=image — set artifact to jar or switch runtime", i)
 			}
+			// Cross-arch image builds are a footgun. trond's image
+			// path mounts /var/run/docker.sock into the builder
+			// container so gradle's docker plugin can talk to the
+			// HOST docker daemon directly. That daemon runs the
+			// host's CPU arch regardless of the builder container's
+			// --platform — so an arm64 builder on an amd64 host
+			// still produces an amd64 image. The cache key would
+			// then claim arm64 but the artifact would be amd64,
+			// silently shipping the wrong arch to a deploy target.
+			// Phase 5 will lift this once buildx replaces the
+			// docker.sock-mount approach.
+			if artifact == "image" && n.Build.Platform != "" {
+				hostPlatform := DefaultPlatform()
+				if n.Build.Platform != hostPlatform {
+					return fmt.Errorf("nodes[%d]: build.artifact=image with platform=%q is unsafe on host=%q — docker.sock-mounted builds always use the host daemon's arch, so the produced image would NOT be %q. Set platform=%q (or omit it), or use build.artifact=jar which is platform-isolated under the builder container", i, n.Build.Platform, hostPlatform, n.Build.Platform, hostPlatform)
+				}
+			}
 		}
 	}
 

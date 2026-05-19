@@ -381,6 +381,17 @@ func validateOptions(o Options) error {
 			return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
 				"node %q: target.runtime=jar cannot consume build.artifact=image — set build.artifact=jar or switch runtime", n.Type)
 		}
+		// Mirror intent.Validate's cross-arch-image guard so callers
+		// bypassing intent.Validate still get rejected. See loader.go
+		// for the full rationale.
+		if artifact == "image" && n.Build.Platform != "" {
+			hostPlatform := intent.DefaultPlatform()
+			if n.Build.Platform != hostPlatform {
+				return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+					"node %q: build.artifact=image with platform=%q is unsafe on host=%q — docker.sock-mounted builds always use the host daemon's arch",
+					n.Type, n.Build.Platform, hostPlatform)
+			}
+		}
 	}
 	return nil
 }

@@ -38,7 +38,12 @@ func manifestPath(key string) string {
 // but not sufficient — we MUST also stat the artifact (jar or image
 // metadata) that the manifest points at. A user who manually deleted
 // a JAR shouldn't get a stale cache hit.
-func Lookup(key CacheKey) (*CacheHit, error) {
+//
+// ctx threads through the docker-inspect call for image artifacts;
+// callers should pass the same signal-aware context they use for
+// the rest of the build so a stuck docker daemon doesn't wedge the
+// cache check.
+func Lookup(ctx context.Context, key CacheKey) (*CacheHit, error) {
 	mp := manifestPath(key.String())
 	m, err := readManifest(mp)
 	if errors.Is(err, os.ErrNotExist) {
@@ -59,10 +64,11 @@ func Lookup(key CacheKey) (*CacheHit, error) {
 		}
 	case "image":
 		// Image artifacts are tracked via images/<key>.json. We also
-		// have to `docker image inspect` to confirm the local image
-		// is still in docker's store — a `docker system prune` or
-		// out-of-band `docker rmi` between trond runs would make the
-		// bookkeeping JSON point at nothing. (FR-020 cleanup branch.)
+		// have to `docker image inspect` to confirm the local TAG
+		// still resolves — a `docker rmi <tag>` (even one that left
+		// the underlying image ID alive via other tags) makes
+		// compose's `image: <tag>` field unresolvable. Tag-side
+		// check is the authoritative one. (FR-020 cleanup branch.)
 		meta, metaErr := readImageMetadata(key.String())
 		if errors.Is(metaErr, os.ErrNotExist) {
 			_ = os.Remove(mp)
@@ -71,7 +77,7 @@ func Lookup(key CacheKey) (*CacheHit, error) {
 		if metaErr != nil {
 			return nil, fmt.Errorf("read image metadata: %w", metaErr)
 		}
-		if !imageExistsLocally(context.Background(), meta.ImageID) {
+		if !imageTagExistsLocally(ctx, meta.Tag) {
 			_ = os.Remove(mp)
 			_ = os.Remove(filepath.Join(CacheDir(), "images", key.String()+".json"))
 			return &CacheHit{Hit: false}, nil

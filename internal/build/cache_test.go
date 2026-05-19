@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +35,7 @@ func TestLookup_NoManifest(t *testing.T) {
 	if err := EnsureCacheDirs(); err != nil {
 		t.Fatalf("EnsureCacheDirs: %v", err)
 	}
-	hit, err := Lookup(CacheKey{
+	hit, err := Lookup(context.Background(), CacheKey{
 		GitRevision:        "abc123def456789012345678901234567890abcd",
 		BuilderImageDigest: "sha256:aaaa",
 		JDKVersion:         "8",
@@ -76,7 +77,7 @@ func TestLookup_StatsArtifact(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	hit, err := Lookup(key)
+	hit, err := Lookup(context.Background(), key)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestLookup_HitWhenArtifactPresent(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	hit, err := Lookup(key)
+	hit, err := Lookup(context.Background(), key)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}

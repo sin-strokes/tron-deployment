@@ -53,19 +53,25 @@ fi
 cp "$JAR" "/out/$OUT_NAME"
 `
 
-// dockerBuildScript_Image is the image-artifact variant. No file
-// copy step — gradle's docker plugin tags the produced image
-// directly into the host's docker daemon (which we expose by
-// bind-mounting /var/run/docker.sock into the container; see the
-// runner setup below). The post-build step that picks up the new
-// image ID lives in image.go::mostRecentlyCreatedImage on the host
-// side, NOT in this script.
+// dockerBuildScript_Image is the image-artifact variant. The
+// gradle docker plugin tags the produced image directly into the
+// host's docker daemon (we bind-mount /var/run/docker.sock; see the
+// runner setup below).
 //
-// Same FR-022 invariant: user input flows through `"$@"`, no
-// interpolation. No OUT_NAME — the host side handles tagging.
+// To robustly identify which image gradle just created — without
+// racing other docker activity on the host — we snapshot the set
+// of image IDs before AND after, then write the diff (newly-created
+// IDs) to /out/new-image-ids. The host-side image.go reads that
+// file rather than guessing via "most recently created".
+//
+// Same FR-022 invariant: gradle args flow through "$@", no
+// interpolation of trond-side fields.
 const dockerBuildScript_Image = `set -e
 cd /src
+docker images -q --no-trunc 2>/dev/null | sort -u > /out/images-before
 ./gradlew "$@"
+docker images -q --no-trunc 2>/dev/null | sort -u > /out/images-after
+comm -13 /out/images-before /out/images-after > /out/new-image-ids
 `
 
 type realDockerRunner struct{}
@@ -89,22 +95,22 @@ func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir,
 
 	// Artifact-kind specific volume + env setup.
 	//
-	//   jar:   mount /out for the JAR copy step; thread $OUT_NAME so
-	//          the script knows what filename to drop in /out.
-	//   image: mount the host's docker socket into the builder
-	//          container so gradle's docker plugin can call back into
-	//          the host daemon to build + tag an image. No /out mount
-	//          needed — the image lives in the host's docker store
-	//          and host-side bookkeeping (image.go) records the tag
-	//          + ID via `docker inspect`.
+	//   jar:   /out holds the produced JAR; $OUT_NAME tells the
+	//          script what filename to drop in /out.
+	//   image: /var/run/docker.sock mounted into the builder so
+	//          gradle's docker plugin can call back into the host
+	//          daemon to build + tag an image. We ALSO mount /out
+	//          because the build-around snapshot script
+	//          (dockerBuildScript_Image) writes the
+	//          before/after image-id diff there for the host side
+	//          to read.
+	args = append(args, "-v", outDir+":/out:rw")
 	switch r.req.ArtifactKind {
 	case "image":
 		args = append(args,
 			"-v", "/var/run/docker.sock:/var/run/docker.sock")
 	default:
-		args = append(args,
-			"-v", outDir+":/out:rw",
-			"-e", "OUT_NAME="+filepath.Base(outTmp))
+		args = append(args, "-e", "OUT_NAME="+filepath.Base(outTmp))
 	}
 
 	// --platform routes to the matching variant of the multi-arch

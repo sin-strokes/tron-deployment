@@ -50,7 +50,12 @@ func buildImage(ctx context.Context, r *resolved, started time.Time) (*Manifest,
 			"build.image_tag is required when artifact = image")
 	}
 
-	if err := defaultRunner.RunDockerBuild(ctx, r, "" /* outDir unused for image */, "" /* outTmp unused */); err != nil {
+	// The wrapper script (dockerBuildScript_Image) snapshots image
+	// IDs before + after gradle into /out/new-image-ids, so we
+	// need /out mounted. outDir is the host path that's bound.
+	outDir := filepath.Join(CacheDir(), "out")
+
+	if err := defaultRunner.RunDockerBuild(ctx, r, outDir, "" /* outTmp unused for image */); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil, output.NewErrorf("BUILD_CANCELLED", 130,
 				"build cancelled by user").
@@ -64,35 +69,29 @@ func buildImage(ctx context.Context, r *resolved, started time.Time) (*Manifest,
 			)
 	}
 
-	// Gradle's docker plugin typically tags the image as
-	// `<group>/<name>:<version>` (e.g. tronprotocol/java-tron:GreatVoyage-…).
-	// We don't try to discover that tag — instead we explicitly re-tag
-	// to whatever the user asked for in build.image_tag.
-	//
-	// To know what to re-tag, we look at the *last* image produced
-	// during the build. `docker image ls -q --filter "label=trond.build=<key>"`
-	// would be cleaner but requires the gradle plugin to set a label
-	// (it doesn't by default). Simpler approach: gradle dockerBuild
-	// already prints the image ID; we capture it via a `docker images`
-	// query against the cache key's parent.
-	//
-	// For Phase 3 we use the simplest workable path: ask docker which
-	// image was created most recently and tag that as our target.
-	// This works for the single-build serialized lock case (FR-015
-	// flock around the cache key); concurrent builds would clobber.
-	imageID, err := mostRecentlyCreatedImage(ctx)
+	// Read the wrapper's before/after diff. Each line is one
+	// image ID that gradle's task produced this run — no race with
+	// other host docker activity (gradle's `docker images` runs
+	// inside our serialized build window).
+	newImageIDs, err := readNewImageIDs(outDir)
 	if err != nil {
 		return nil, output.NewErrorf("BUILD_FAILED", output.ExitGeneralError,
 			"locate produced image: %s", err.Error())
 	}
-	if imageID == "" {
+	if len(newImageIDs) == 0 {
 		return nil, output.NewError("BUILD_FAILED", output.ExitGeneralError,
-			"gradle finished but no docker image appeared in `docker images`").
+			"gradle finished but no new docker image appeared on the host").
 			WithSuggestions(
 				"Verify the gradle task you ran actually produces a docker image",
 				"Common task names: dockerBuild, jib, bootBuildImage",
 			)
 	}
+	// Pick the LAST new image — gradle's docker plugin typically
+	// produces intermediate layers + a final tagged image; the
+	// final one is the deploy artifact. (If gradle produced
+	// multiple final images, the user's gradle_task name selected
+	// only one, so picking the most-recent is unambiguous.)
+	imageID := newImageIDs[len(newImageIDs)-1]
 	if err := dockerTag(ctx, imageID, tag); err != nil {
 		return nil, output.NewErrorf("BUILD_FAILED", output.ExitGeneralError,
 			"docker tag %s %s: %s", imageID, tag, err.Error())
@@ -137,24 +136,33 @@ func buildImage(ctx context.Context, r *resolved, started time.Time) (*Manifest,
 	return manifest, nil
 }
 
-// mostRecentlyCreatedImage returns the image ID at the top of
-// `docker images -q` — the most recently created image on the
-// host. Used to locate the artifact gradle's dockerBuild plugin
-// just produced (no standard way to ask the plugin directly).
-func mostRecentlyCreatedImage(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", "images", "-q", "--no-trunc")
-	out, err := cmd.Output()
+// readNewImageIDs returns the image IDs the wrapper script
+// recorded as newly created during the gradle run.
+//
+// The wrapper computes (after \ before) of `docker images -q
+// --no-trunc | sort -u` and writes the result to
+// /out/new-image-ids. Because both snapshots happen inside the
+// builder's serialized window (FR-015 flock), the diff is robust
+// against the user's other host docker activity.
+//
+// Empty file = gradle ran but produced no image. Returns the IDs
+// in the order docker reported them (typically by creation time
+// thanks to sort order on hashes — not strictly, but stable enough
+// for our needs since the build is gated to one image producer).
+func readNewImageIDs(outDir string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(outDir, "new-image-ids"))
 	if err != nil {
-		return "", fmt.Errorf("docker images: %w", err)
+		return nil, fmt.Errorf("read new-image-ids: %w", err)
 	}
-	for line := range strings.SplitSeq(string(out), "\n") {
+	var ids []string
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		return line, nil // first line = newest
+		ids = append(ids, line)
 	}
-	return "", nil
+	return ids, nil
 }
 
 func dockerTag(ctx context.Context, imageID, tag string) error {
@@ -170,16 +178,19 @@ func dockerTag(ctx context.Context, imageID, tag string) error {
 // `docker inspect`; we don't try to actually `docker run` the image
 // because that's expensive and we don't have arguments to test it
 // with.
+//
+// Uses {{len ...}} to compare numbers (0/0 = both empty) rather
+// than string-compare the formatted array — docker version drift
+// changes the printed representation but never the array length.
 func validateImageEntrypoint(ctx context.Context, tag string) error {
 	cmd := exec.CommandContext(ctx, "docker", "inspect",
-		"--format={{.Config.Entrypoint}}|{{.Config.Cmd}}", tag)
+		"--format={{len .Config.Entrypoint}}/{{len .Config.Cmd}}", tag)
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("docker inspect %s: %w", tag, err)
 	}
 	got := strings.TrimSpace(string(out))
-	// "[]|[]" is what docker prints for entirely missing entrypoint + cmd.
-	if got == "[]|[]" || got == "|" {
+	if got == "0/0" {
 		return fmt.Errorf("image %s has neither ENTRYPOINT nor CMD", tag)
 	}
 	return nil
@@ -215,12 +226,15 @@ func readImageMetadata(cacheKey string) (*imageMetadata, error) {
 	return &meta, nil
 }
 
-// imageExistsLocally checks whether the named image ID is still
-// present in the host's docker storage. A `trond build prune` run
-// outside trond's purview, or `docker system prune`, can delete the
-// image; the bookkeeping JSON then points at nothing.
-func imageExistsLocally(ctx context.Context, imageID string) bool {
+// imageTagExistsLocally checks whether the docker tag is still
+// resolvable in the host's image store. We deliberately check tag
+// (not image ID): a `docker rmi <tag>` may detach the tag while the
+// underlying image stays alive via another tag, but compose's
+// `image: <tag>` field is what trond renders — so tag presence is
+// the authoritative signal. Tag-side check also catches the case
+// where the user retagged trond's image to something else.
+func imageTagExistsLocally(ctx context.Context, tag string) bool {
 	cmd := exec.CommandContext(ctx, "docker", "image", "inspect",
-		"--format={{.Id}}", imageID)
+		"--format={{.Id}}", tag)
 	return cmd.Run() == nil
 }

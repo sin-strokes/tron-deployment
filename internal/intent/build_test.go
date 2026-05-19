@@ -388,6 +388,67 @@ nodes:
 	}
 }
 
+// TestParse_BuildImageRejectsCrossArchPlatform is the Phase 3
+// review pass 1 regression guard for the most-dangerous Phase 3
+// combo: artifact=image with a platform that differs from the host's
+// arch. The docker.sock-mounted builder can't actually produce a
+// cross-arch image (host daemon wins); silently accepting it would
+// cache an amd64 image under an arm64 cache key (or vice versa)
+// and deploy the wrong arch to the target server.
+func TestParse_BuildImageRejectsCrossArchPlatform(t *testing.T) {
+	host := DefaultPlatform()
+	var crossArch string
+	if host == "linux/arm64" {
+		crossArch = "linux/amd64"
+	} else {
+		crossArch = "linux/arm64"
+	}
+	data := []byte(`
+name: bad-cross
+network: nile
+target:
+  type: local
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build:dev
+      platform: ` + crossArch + `
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatalf("expected rejection of artifact=image + platform=%q on host=%q",
+			crossArch, host)
+	}
+	if !strings.Contains(err.Error(), "unsafe") {
+		t.Errorf("error %q should explain the cross-arch hazard", err)
+	}
+}
+
+// TestParse_BuildImageAcceptsHostArchPlatform: same combo but
+// platform equals the host arch — the safe case — must still parse.
+func TestParse_BuildImageAcceptsHostArchPlatform(t *testing.T) {
+	host := DefaultPlatform()
+	data := []byte(`
+name: ok-same-arch
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build:dev
+      platform: ` + host + `
+`)
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("host-arch image build should parse: %v", err)
+	}
+}
+
 // TestParse_BuildInvalidJDK pins the validator-tag enum.
 func TestParse_BuildInvalidJDK(t *testing.T) {
 	data := []byte(`

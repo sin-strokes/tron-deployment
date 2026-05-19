@@ -129,7 +129,7 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	// Fast path: cheap stat, no lock.
-	if hit, _ := Lookup(r.key); hit != nil && hit.Hit {
+	if hit, _ := Lookup(ctx, r.key); hit != nil && hit.Hit {
 		return resultFromManifest(hit.Manifest, true, time.Since(started).Milliseconds()), nil
 	}
 
@@ -142,11 +142,26 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	defer release()
 
 	// Re-check after lock — winner of the race may have finished.
-	if hit, _ := Lookup(r.key); hit != nil && hit.Hit {
+	if hit, _ := Lookup(ctx, r.key); hit != nil && hit.Hit {
 		return resultFromManifest(hit.Manifest, true, time.Since(started).Milliseconds()), nil
 	}
 
 	_ = AppendAuditEvent(PhaseInProgress, r.cacheKeyStr, "", started)
+
+	// Image builds mount /var/run/docker.sock into the builder
+	// container so gradle's docker plugin can call back into the
+	// host daemon. That extends trust to anything inside /src
+	// (build.gradle, plugins, transitive build scripts) — they can
+	// `docker run --privileged` against the host. trond defaults to
+	// trusting the source tree (it's the user's own checkout), but
+	// surface the boundary so operators building third-party forks
+	// notice once per invocation.
+	if r.req.ArtifactKind == "image" {
+		fmt.Fprintln(os.Stderr,
+			"notice: build.artifact=image mounts /var/run/docker.sock into the builder; "+
+				"the source tree's build.gradle gains host docker access. "+
+				"Only run against trusted sources.")
+	}
 
 	var manifest *Manifest
 	var artifactErr error

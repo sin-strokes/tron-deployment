@@ -103,6 +103,32 @@ func TestValidateEnvKey(t *testing.T) {
 	}
 }
 
+// TestValidateImageTag_RejectsWellKnownPrefix is the Phase 3
+// review pass 1 regression guard. Letting the user tag a locally-
+// built image as `tronprotocol/java-tron:...` would silently shadow
+// the upstream image in the host's docker store — operators
+// debugging deploys would see a tag they recognize and reasonably
+// assume it's the canonical bits.
+func TestValidateImageTag_RejectsWellKnownPrefix(t *testing.T) {
+	cases := []string{
+		"tronprotocol/java-tron:foo",
+		"tronprotocol/whatever:bar",
+		"eclipse-temurin/something:8-jdk",
+		"library/something:bar",
+	}
+	for _, tag := range cases {
+		t.Run(tag, func(t *testing.T) {
+			err := ValidateImageTag(tag)
+			if err == nil {
+				t.Fatal("expected rejection of well-known prefix")
+			}
+			if !strings.Contains(err.Error(), "reserved") {
+				t.Errorf("error %q should mention 'reserved'", err)
+			}
+		})
+	}
+}
+
 func TestValidateImageTag(t *testing.T) {
 	tests := []struct {
 		tag  string
