@@ -28,6 +28,25 @@ type Target interface {
 	// MemTotal returns total system memory in bytes.
 	MemTotal(ctx context.Context) (uint64, error)
 
+	// PutFile streams a local file to a remote path with atomic
+	// install semantics (data lands at <remotePath>.tmp first, then
+	// mv renames). Used by the Phase 4 build pipeline to transfer a
+	// locally-built JAR to an SSH target. LocalTarget's
+	// implementation is a same-fs copy (or no-op when localPath ==
+	// remotePath).
+	PutFile(ctx context.Context, localPath, remotePath string) error
+
+	// Sha256IfExists returns the hex sha256 of a file at the given
+	// path, or empty string if the file does not exist. Used to skip
+	// transfer when the target already holds the bit-identical
+	// artifact.
+	Sha256IfExists(ctx context.Context, path string) (string, error)
+
+	// CommandExists reports whether the named executable resolves
+	// on the target's PATH. Used by preflight to fail-fast before
+	// apply if a required tool (scp, sha256sum, ...) is missing.
+	CommandExists(ctx context.Context, name string) bool
+
 	// String returns a human-readable description of the target.
 	String() string
 }

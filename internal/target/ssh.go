@@ -228,6 +228,118 @@ func (t *SSHTarget) Upload(ctx context.Context, localPath, remotePath string) er
 	return t.writeRemoteFile(ctx, remotePath, localData, 0644)
 }
 
+// PutFile streams a large local file to a remote path WITHOUT loading
+// the whole file into trond's heap (vs Upload which slurps everything).
+// Designed for the build pipeline's SSH-target path where the JAR is
+// ~200 MB and the deploy runs on a fairly constrained dev workstation.
+//
+// Atomicity: data lands at `remotePath.tmp` first, then `mv` renames
+// to the final path. A cancelled run via ctx (e.g. SIGINT during the
+// scp window) leaves only the .tmp (best-effort cleanup on the host
+// side handles that). The remote never observes a half-written JAR
+// being executed by systemd.
+//
+// FR-009 / FR-016 (Phase 4): SSH target build → scp → atomic install.
+func (t *SSHTarget) PutFile(ctx context.Context, localPath, remotePath string) error {
+	if t.client == nil {
+		return fmt.Errorf("ssh not connected")
+	}
+	if err := security.ValidateCommand("tee"); err != nil {
+		return err
+	}
+	if err := security.ValidateCommand("mv"); err != nil {
+		return err
+	}
+
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("open local %s: %w", localPath, err)
+	}
+	defer f.Close()
+
+	session, err := t.client.NewSession()
+	if err != nil {
+		return fmt.Errorf("new ssh session: %w", err)
+	}
+	defer session.Close()
+
+	session.Stdin = f
+
+	tmpPath := remotePath + ".tmp"
+	quotedTmp := shellQuote(tmpPath)
+	quotedFinal := shellQuote(remotePath)
+	quotedDir := shellQuote(filepath.Dir(remotePath))
+	// mkdir parent → tee bytes into .tmp → chmod 0644 → atomic mv.
+	// `set -e` inside the bash invocation so a failed step aborts
+	// the chain before mv promotes a partial file.
+	cmd := fmt.Sprintf(
+		"set -e; mkdir -p %s; tee %s > /dev/null; chmod 0644 %s; mv %s %s",
+		quotedDir, quotedTmp, quotedTmp, quotedTmp, quotedFinal,
+	)
+
+	done := make(chan error, 1)
+	go func() { done <- session.Run(cmd) }()
+
+	select {
+	case runErr := <-done:
+		if runErr != nil {
+			// Best-effort: clean up the .tmp left behind on the
+			// remote so the next run doesn't see stale state.
+			_, _ = t.Exec(context.Background(), "rm", "-f", tmpPath)
+			return fmt.Errorf("put remote file %s: %w", remotePath, runErr)
+		}
+		return nil
+	case <-ctx.Done():
+		_ = session.Signal(ssh.SIGTERM)
+		_ = session.Close()
+		// Best-effort cleanup of the partial .tmp.
+		_, _ = t.Exec(context.Background(), "rm", "-f", tmpPath)
+		return ctx.Err()
+	}
+}
+
+// Sha256IfExists returns the hex sha256 of a remote file, or empty
+// string if the file doesn't exist. Used by the Phase 4 build flow
+// to skip scp when the remote already holds the bit-identical JAR.
+//
+// Implementation: `sha256sum <path>` on the remote. Linux servers
+// almost always have this from coreutils; if not the call fails
+// and we fall through to a normal scp (which is a fine fallback).
+func (t *SSHTarget) Sha256IfExists(ctx context.Context, remotePath string) (string, error) {
+	if t.client == nil {
+		return "", fmt.Errorf("ssh not connected")
+	}
+	// Check existence via `test -f` first; missing file = "" not an
+	// error (the caller wants to scp in that case).
+	if _, err := t.Exec(ctx, "test", "-f", remotePath); err != nil {
+		return "", nil
+	}
+	out, err := t.Exec(ctx, "sha256sum", remotePath)
+	if err != nil {
+		return "", fmt.Errorf("sha256sum %s: %w", remotePath, err)
+	}
+	// `sha256sum <path>` output: `<hex>  <path>\n`.
+	parts := strings.Fields(string(out))
+	if len(parts) < 1 {
+		return "", fmt.Errorf("unexpected sha256sum output: %q", string(out))
+	}
+	return parts[0], nil
+}
+
+// CommandExists reports whether a command is on the remote's PATH.
+// Used by preflight (FR-017) to fail-fast before apply when a
+// dependency like scp / sha256sum is missing on the target.
+//
+// `command -v <name>` is the POSIX-portable way to ask the shell
+// "does this resolve to anything"; works on bash, sh, dash, ash.
+func (t *SSHTarget) CommandExists(ctx context.Context, name string) bool {
+	if t.client == nil {
+		return false
+	}
+	_, err := t.Exec(ctx, "command", "-v", name)
+	return err == nil
+}
+
 func (t *SSHTarget) Download(ctx context.Context, remotePath, localPath string) error {
 	if t.client == nil {
 		return fmt.Errorf("ssh not connected")

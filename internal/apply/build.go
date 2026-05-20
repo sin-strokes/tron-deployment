@@ -8,7 +8,45 @@ import (
 	"github.com/tronprotocol/tron-deployment/internal/build"
 	"github.com/tronprotocol/tron-deployment/internal/intent"
 	"github.com/tronprotocol/tron-deployment/internal/output"
+	"github.com/tronprotocol/tron-deployment/internal/target"
 )
+
+// transferBuiltJAR is the Phase 4 SSH-target hook: scp the locally-
+// built JAR to the remote install path, with a sha256 fast-path that
+// skips the transfer when the remote already holds the bit-identical
+// artifact.
+//
+// Atomicity is delegated to target.PutFile (which writes
+// `<remotePath>.tmp` then atomically renames). SIGINT during the
+// transfer is honored via the inherited ctx; the SSH target's
+// implementation cleans up the `.tmp` on the remote.
+//
+// Source-tree paranoia (spec/002): no source bytes ever leave the
+// host. Only the artifact ships.
+func transferBuiltJAR(
+	ctx context.Context,
+	tgt target.Target,
+	summary *BuildSummary,
+	localPath, remotePath string,
+) error {
+	// Fast path: same sha256 → no transfer needed. Saves the
+	// round-trip and the bandwidth on intent re-applies that didn't
+	// change the source.
+	if summary != nil && summary.SHA256 != "" {
+		if remoteSHA, err := tgt.Sha256IfExists(ctx, remotePath); err == nil && remoteSHA == summary.SHA256 {
+			return nil
+		}
+	}
+	if err := tgt.PutFile(ctx, localPath, remotePath); err != nil {
+		return output.NewErrorf("DEPLOY_ERROR", output.ExitGeneralError,
+			"transfer built JAR to %s: %s", remotePath, err.Error()).
+			WithSuggestions(
+				"Verify the remote target is reachable: trond preflight --intent <intent>",
+				"Verify the remote install_path is writable by the SSH user",
+			)
+	}
+	return nil
+}
 
 // resolveBuild handles the optional `build:` block on a node. When
 // present it invokes the build pipeline (cache-hit-fast-path) and

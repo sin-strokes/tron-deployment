@@ -242,7 +242,20 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 			return nil, fmt.Errorf("docker deploy: %w", err)
 		}
 	case "jar":
+		// Phase 4: when intent has `build:` + target is SSH, scp the
+		// locally-built JAR to the remote BEFORE rendering the
+		// systemd unit. The unit's ExecStart will reference the
+		// remote-side path. Local targets keep the cache-path
+		// reference (no transfer needed; systemd reads the cache
+		// path directly on the same fs).
 		jarPath := builtJarPath // empty when node has no `build:` block
+		if builtJarPath != "" && opts.Intent.Target.Type == "ssh" {
+			remoteJar := filepath.Join(node.InstallPath, "FullNode.jar")
+			if err := transferBuiltJAR(ctx, opts.Target, buildSummary, builtJarPath, remoteJar); err != nil {
+				return nil, err
+			}
+			jarPath = remoteJar
+		}
 		deployOpts.SystemdData = []byte(render.RenderSystemdUnit(opts.Intent, node, jvmArgs, jarPath, ""))
 		// JarPath still points at the install_path location for `mkdir -p` /
 		// config layout; only the systemd ExecStart references jarPath above.
