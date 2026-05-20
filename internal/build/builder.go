@@ -57,6 +57,12 @@ type Request struct {
 	// cross-build the JAR that java-tron actually supports on a
 	// given target architecture (amd64 → JDK 8, arm64 → JDK 17).
 	Platform string
+	// ImageStrategy picks between "gradle" (Phase 3 — source must
+	// have a gradle dockerBuild task) and "jar-wrap" (Phase 5d —
+	// produce JAR, then COPY into a trond-embedded Dockerfile).
+	// Only meaningful when ArtifactKind=image. Empty defaults to
+	// "gradle" for backward compatibility.
+	ImageStrategy string
 }
 
 // Result is the JSON-serializable success payload. Mirrors
@@ -148,17 +154,22 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 
 	_ = AppendAuditEvent(PhaseInProgress, r.cacheKeyStr, "", started)
 
-	// Image builds mount /var/run/docker.sock into the builder
-	// container so gradle's docker plugin can call back into the
-	// host daemon. That extends trust to anything inside /src
-	// (build.gradle, plugins, transitive build scripts) — they can
-	// `docker run --privileged` against the host. trond defaults to
-	// trusting the source tree (it's the user's own checkout), but
-	// surface the boundary so operators building third-party forks
-	// notice once per invocation.
-	if r.req.ArtifactKind == "image" {
+	// Image builds with strategy=gradle mount /var/run/docker.sock
+	// into the builder container so gradle's docker plugin can call
+	// back into the host daemon. That extends trust to anything
+	// inside /src (build.gradle, plugins, transitive build scripts)
+	// — they can `docker run --privileged` against the host. trond
+	// defaults to trusting the source tree (it's the user's own
+	// checkout), but surface the boundary so operators building
+	// third-party forks notice once per invocation.
+	//
+	// jar-wrap strategy doesn't mount docker.sock — the JAR is
+	// produced in a normal Phase 1-2 builder + then docker build
+	// runs on the host with a trond-controlled Dockerfile. No
+	// notice needed.
+	if r.req.ArtifactKind == "image" && r.req.ImageStrategy != "jar-wrap" {
 		fmt.Fprintln(os.Stderr,
-			"notice: build.artifact=image mounts /var/run/docker.sock into the builder; "+
+			"notice: build.artifact=image (strategy=gradle) mounts /var/run/docker.sock into the builder; "+
 				"the source tree's build.gradle gains host docker access. "+
 				"Only run against trusted sources.")
 	}
@@ -169,7 +180,13 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	case "jar":
 		manifest, artifactErr = buildJAR(ctx, r, started)
 	case "image":
-		manifest, artifactErr = buildImage(ctx, r, started)
+		switch r.req.ImageStrategy {
+		case "jar-wrap":
+			manifest, artifactErr = buildImageJarWrap(ctx, r, started)
+		default:
+			// "gradle" or empty (default per applyNodeDefaults).
+			manifest, artifactErr = buildImage(ctx, r, started)
+		}
 	default:
 		_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, "VALIDATION_ERROR", started)
 		return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
@@ -241,6 +258,7 @@ func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 		GradleTask:         req.GradleTask,
 		GradleArgs:         append([]string(nil), req.GradleArgs...),
 		Platform:           req.Platform,
+		ImageStrategy:      req.ImageStrategy,
 	}
 	return &resolved{
 		req:         req,

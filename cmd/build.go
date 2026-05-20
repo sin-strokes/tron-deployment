@@ -32,6 +32,7 @@ var (
 	buildImageTag      string
 	buildImageOverride string
 	buildPlatform      string
+	buildImageStrategy string
 )
 
 var buildCmd = &cobra.Command{
@@ -85,6 +86,11 @@ func init() {
 	buildCmd.Flags().StringVar(&buildPlatform, "platform", "",
 		"Docker --platform for the builder container (linux/amd64 or linux/arm64). "+
 			"Empty = host arch. Cross-arch builds use QEMU emulation.")
+	buildCmd.Flags().StringVar(&buildImageStrategy, "image-strategy", "",
+		"For --artifact image: 'gradle' (default — invoke source's gradle dockerBuild "+
+			"task; requires the source to ship one) or 'jar-wrap' (produce JAR via "+
+			"the artifact=jar path, then COPY into a trond-embedded Dockerfile — "+
+			"works for stock java-tron).")
 	rootCmd.AddCommand(buildCmd)
 }
 
@@ -112,6 +118,7 @@ func runBuild(cmd *cobra.Command, _ []string) error {
 		ImageTag:             buildImageTag,
 		BuilderImageOverride: buildImageOverride,
 		Platform:             buildPlatform,
+		ImageStrategy:        buildImageStrategy,
 	}
 
 	// SIGINT-aware context. Build container + git subprocesses all

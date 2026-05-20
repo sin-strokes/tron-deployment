@@ -449,6 +449,98 @@ nodes:
 	}
 }
 
+// TestParse_BuildImageStrategyJarWrap_AllowsCrossArch is the Phase
+// 5d unlock guard. When users opt into `image_strategy: jar-wrap`,
+// the runtime/artifact validator MUST NOT reject cross-arch builds
+// (the docker.sock-mounted gradle path is the unsafe one; jar-wrap
+// runs docker build directly from host where --platform works).
+func TestParse_BuildImageStrategyJarWrap_AllowsCrossArch(t *testing.T) {
+	host := DefaultPlatform()
+	var crossArch string
+	if host == "linux/arm64" {
+		crossArch = "linux/amd64"
+	} else {
+		crossArch = "linux/arm64"
+	}
+	data := []byte(`
+name: ok-cross-arch
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build/dev:foo
+      image_strategy: jar-wrap
+      platform: ` + crossArch + `
+`)
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("jar-wrap should permit cross-arch (unlike gradle strategy): %v", err)
+	}
+}
+
+// TestParse_BuildImageStrategyGradle_RejectsCrossArch is the
+// regression guard for the OTHER half — gradle strategy must keep
+// rejecting cross-arch (the docker.sock hazard is real for that
+// path).
+func TestParse_BuildImageStrategyGradle_RejectsCrossArch(t *testing.T) {
+	host := DefaultPlatform()
+	var crossArch string
+	if host == "linux/arm64" {
+		crossArch = "linux/amd64"
+	} else {
+		crossArch = "linux/arm64"
+	}
+	data := []byte(`
+name: bad-cross-arch
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build/dev:foo
+      image_strategy: gradle
+      platform: ` + crossArch + `
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("gradle strategy must still reject cross-arch")
+	}
+}
+
+// TestParse_BuildImageStrategyDefaultsToGradle: omitting the field
+// must keep the Phase 3 default (gradle), so existing tron-docker-
+// shaped intents continue working unchanged.
+func TestParse_BuildImageStrategyDefaultsToGradle(t *testing.T) {
+	data := []byte(`
+name: default-strategy
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build/dev:foo
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := i.Nodes[0].Build.ImageStrategy; got != "gradle" {
+		t.Errorf("image_strategy default = %q; want gradle", got)
+	}
+}
+
 // TestParse_BuildInvalidJDK pins the validator-tag enum.
 func TestParse_BuildInvalidJDK(t *testing.T) {
 	data := []byte(`

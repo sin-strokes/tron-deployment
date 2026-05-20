@@ -249,6 +249,17 @@ func applyNodeDefaults(node *NodeSpec) {
 				node.Build.GradleTask = "dockerBuild"
 			}
 		}
+		// image_strategy defaults to "gradle" for backward compat
+		// with Phase 3. Users on stock java-tron set
+		// `image_strategy: jar-wrap` explicitly — trond then runs
+		// the Phase 5d path which produces the image from a
+		// JAR-wrap Dockerfile and ignores GradleTask's dockerBuild
+		// default. We do NOT auto-detect strategy: requiring
+		// explicit opt-in keeps existing tron-docker-style intents
+		// working unchanged.
+		if node.Build.Artifact == "image" && node.Build.ImageStrategy == "" {
+			node.Build.ImageStrategy = "gradle"
+		}
 	}
 
 	// Feature defaults

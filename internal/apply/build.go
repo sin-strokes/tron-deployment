@@ -88,6 +88,7 @@ func resolveBuild(
 		BuilderImageOverride: bs.BuilderImageOverride,
 		Env:                  bs.Env,
 		Platform:             bs.Platform,
+		ImageStrategy:        bs.ImageStrategy,
 	}
 
 	res, runErr := build.Run(ctx, req)

@@ -358,12 +358,19 @@ func Validate(intent *Intent) error {
 			// still produces an amd64 image. The cache key would
 			// then claim arm64 but the artifact would be amd64,
 			// silently shipping the wrong arch to a deploy target.
-			// Phase 5 will lift this once buildx replaces the
-			// docker.sock-mount approach.
-			if artifact == "image" && n.Build.Platform != "" {
+			//
+			// jar-wrap (Phase 5d) is SAFE for cross-arch: it runs
+			// `docker build` directly from the host (no docker.sock
+			// bind-mount), so --platform works correctly. The
+			// rejection only applies to the gradle strategy.
+			imgStrategy := n.Build.ImageStrategy
+			if imgStrategy == "" {
+				imgStrategy = "gradle"
+			}
+			if artifact == "image" && imgStrategy == "gradle" && n.Build.Platform != "" {
 				hostPlatform := DefaultPlatform()
 				if n.Build.Platform != hostPlatform {
-					return fmt.Errorf("nodes[%d]: build.artifact=image with platform=%q is unsafe on host=%q — docker.sock-mounted builds always use the host daemon's arch, so the produced image would NOT be %q. Set platform=%q (or omit it), or use build.artifact=jar which is platform-isolated under the builder container", i, n.Build.Platform, hostPlatform, n.Build.Platform, hostPlatform)
+					return fmt.Errorf("nodes[%d]: build.artifact=image with platform=%q is unsafe on host=%q using image_strategy=gradle — docker.sock-mounted builds always use the host daemon's arch, so the produced image would NOT be %q. Either: switch to image_strategy=jar-wrap (cross-arch safe), set platform=%q, or use build.artifact=jar", i, n.Build.Platform, hostPlatform, n.Build.Platform, hostPlatform)
 				}
 			}
 		}
