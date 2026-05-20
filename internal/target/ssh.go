@@ -299,24 +299,25 @@ func (t *SSHTarget) PutFile(ctx context.Context, localPath, remotePath string) e
 }
 
 // Sha256IfExists returns the hex sha256 of a remote file, or empty
-// string if the file doesn't exist. Used by the Phase 4 build flow
-// to skip scp when the remote already holds the bit-identical JAR.
+// string when the file doesn't exist OR the remote can't hash it
+// (e.g. missing sha256sum). The caller treats empty as "transfer
+// needed", which is correct in both cases.
 //
-// Implementation: `sha256sum <path>` on the remote. Linux servers
-// almost always have this from coreutils; if not the call fails
-// and we fall through to a normal scp (which is a fine fallback).
+// We deliberately skip a `test -f` preflight: a single sha256sum
+// call subsumes both "exists" and "compute hash" — when the file
+// is missing, sha256sum exits non-zero and we return empty, which
+// gives apply the same result it would have gotten from a 'no such
+// file' preflight. One round-trip, one allowlisted command.
 func (t *SSHTarget) Sha256IfExists(ctx context.Context, remotePath string) (string, error) {
 	if t.client == nil {
 		return "", fmt.Errorf("ssh not connected")
 	}
-	// Check existence via `test -f` first; missing file = "" not an
-	// error (the caller wants to scp in that case).
-	if _, err := t.Exec(ctx, "test", "-f", remotePath); err != nil {
-		return "", nil
-	}
 	out, err := t.Exec(ctx, "sha256sum", remotePath)
 	if err != nil {
-		return "", fmt.Errorf("sha256sum %s: %w", remotePath, err)
+		// Missing file or sha256sum unavailable. Either way the
+		// caller should proceed with the transfer; not an error
+		// from our perspective.
+		return "", nil
 	}
 	// `sha256sum <path>` output: `<hex>  <path>\n`.
 	parts := strings.Fields(string(out))
@@ -330,13 +331,16 @@ func (t *SSHTarget) Sha256IfExists(ctx context.Context, remotePath string) (stri
 // Used by preflight (FR-017) to fail-fast before apply when a
 // dependency like scp / sha256sum is missing on the target.
 //
-// `command -v <name>` is the POSIX-portable way to ask the shell
-// "does this resolve to anything"; works on bash, sh, dash, ash.
+// Implementation: `which <name>` rather than `command -v`. `command`
+// is a shell builtin and isn't on trond's SSH allowlist (each
+// allowlist entry adds attack surface — keep narrow); `which` IS
+// allowlisted and behaves identically for the existence check we
+// care about.
 func (t *SSHTarget) CommandExists(ctx context.Context, name string) bool {
 	if t.client == nil {
 		return false
 	}
-	_, err := t.Exec(ctx, "command", "-v", name)
+	_, err := t.Exec(ctx, "which", name)
 	return err == nil
 }
 
