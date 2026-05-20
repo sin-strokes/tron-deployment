@@ -103,6 +103,12 @@ func (t *LocalTarget) CommandExists(_ context.Context, name string) bool {
 	return err == nil
 }
 
+// Compile-time assertion that LocalTarget implements Target. Future
+// additions to the Target interface fail loudly here instead of at
+// the first use site somewhere else in the codebase. Mirrors the
+// equivalent assertion at the bottom of ssh.go.
+var _ Target = (*LocalTarget)(nil)
+
 func (t *LocalTarget) Download(_ context.Context, remotePath, localPath string) error {
 	return copyFile(remotePath, localPath)
 }

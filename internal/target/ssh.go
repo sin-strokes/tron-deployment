@@ -283,18 +283,29 @@ func (t *SSHTarget) PutFile(ctx context.Context, localPath, remotePath string) e
 	select {
 	case runErr := <-done:
 		if runErr != nil {
-			// Best-effort: clean up the .tmp left behind on the
-			// remote so the next run doesn't see stale state.
-			_, _ = t.Exec(context.Background(), "rm", "-f", tmpPath)
+			t.cleanupTmp(tmpPath)
 			return fmt.Errorf("put remote file %s: %w", remotePath, runErr)
 		}
 		return nil
 	case <-ctx.Done():
 		_ = session.Signal(ssh.SIGTERM)
 		_ = session.Close()
-		// Best-effort cleanup of the partial .tmp.
-		_, _ = t.Exec(context.Background(), "rm", "-f", tmpPath)
+		t.cleanupTmp(tmpPath)
 		return ctx.Err()
+	}
+}
+
+// cleanupTmp removes a leftover `.tmp` from a failed PutFile. The
+// removal is best-effort — if SSH is already wedged (the typical
+// reason PutFile failed in the first place), `rm` will also fail
+// and we surface a one-line stderr warning so an operator at least
+// knows there's stale state to investigate. Without the warning the
+// .tmp file could persist across many failed deploys silently.
+func (t *SSHTarget) cleanupTmp(tmpPath string) {
+	if _, err := t.Exec(context.Background(), "rm", "-f", tmpPath); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"warning: failed to clean up partial transfer %s on %s: %v\n",
+			tmpPath, t.String(), err)
 	}
 }
 
@@ -314,6 +325,13 @@ func (t *SSHTarget) Sha256IfExists(ctx context.Context, remotePath string) (stri
 	}
 	out, err := t.Exec(ctx, "sha256sum", remotePath)
 	if err != nil {
+		// Propagate cancellation directly instead of fooling the
+		// caller into thinking "no file, scp it" → another SSH
+		// round-trip → eventually surfaces cancellation. Faster
+		// bail-out when the user hit Ctrl+C.
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", ctx.Err()
+		}
 		// Missing file or sha256sum unavailable. Either way the
 		// caller should proceed with the transfer; not an error
 		// from our perspective.
