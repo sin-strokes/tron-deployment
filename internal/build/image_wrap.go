@@ -116,9 +116,15 @@ func buildImageFromJAR(ctx context.Context, r *resolved, jarPath, jarSHA256 stri
 	}
 
 	// Render the embedded Dockerfile with the per-build placeholders.
+	// Arch triplet follows Debian's multi-arch convention so the
+	// tcmalloc lib resolves to the correct path inside the image.
 	dockerfile := strings.NewReplacer(
 		"{{BASE_IMAGE}}", r.imageRef,
 		"{{JAR_NAME}}", jarName,
+		"{{ARCH_TRIPLET}}", archTripletForPlatform(r.req.Platform),
+		"{{SOURCE_REVISION}}", r.src.ResolvedRevision,
+		"{{CACHE_KEY}}", r.cacheKeyStr,
+		"{{BUILD_TIME}}", time.Now().UTC().Format(time.RFC3339),
 	).Replace(jarWrapDockerfileTemplate)
 	if err := os.WriteFile(filepath.Join(contextDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
 		return nil, output.NewErrorf("INTERNAL_ERROR", output.ExitGeneralError,
@@ -211,6 +217,22 @@ func dockerInspectImageID(ctx context.Context, tag string) (string, error) {
 		return "", fmt.Errorf("docker image inspect %s: %w", tag, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// archTripletForPlatform maps trond's docker platform string to the
+// Debian multi-arch triplet used in /usr/lib/<triplet>/<libname>.
+// Eclipse Temurin's `*-jdk-jammy` base is Ubuntu 22.04 (Debian-derived)
+// so the same triplet convention applies to our LD_PRELOAD path.
+//
+// Defaults to amd64 for the (rare) case of an empty Platform — same
+// rule as the rest of the build pipeline's Phase 5d default chain.
+func archTripletForPlatform(platform string) string {
+	switch platform {
+	case "linux/arm64":
+		return "aarch64-linux-gnu"
+	default:
+		return "x86_64-linux-gnu"
+	}
 }
 
 // copyFileForWrap is a small helper because using io's Copy directly
