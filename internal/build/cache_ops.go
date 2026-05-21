@@ -296,6 +296,15 @@ func Prune(ctx context.Context, opts PruneOptions) (*PruneResult, error) {
 	}
 
 	for _, e := range plan {
+		// Honor cancellation between entries — each iteration may
+		// include a `docker image rm` (image artifacts) that can
+		// run for tens of seconds; without this check, Ctrl+C only
+		// takes effect when the next docker call returns. Plan
+		// remains populated so the caller sees what WOULD have
+		// been removed at the cancellation point.
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		// FR-015 lock — same key the builder grabs in Run(). We use
 		// the non-blocking try-variant: if a build holds this key
 		// right now, prune skips the entry rather than waiting (a

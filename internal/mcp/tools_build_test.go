@@ -241,6 +241,51 @@ func TestBuildPrune_KeepLastAloneConfirmRejected(t *testing.T) {
 	})
 }
 
+// TestBuildPrune_ZeroDurationDoesNotBypassFootgun is the review-
+// pass-5 hardening for the MCP footgun guard. The previous check
+// used `args.OlderThan == ""` to detect "no scoping filter", but
+// `older_than: "0s"` (or "0h", or "-1h") parses fine, ends up as
+// duration zero / negative, then `selectForPrune`'s `> 0` gate
+// silently ignores it — bypassing the guard the LLM cannot have
+// realized existed. Fix parses older_than FIRST and treats only
+// positive durations as a real scoping filter.
+func TestBuildPrune_ZeroDurationDoesNotBypassFootgun(t *testing.T) {
+	session, cleanup := newConnectedPair(t)
+	defer cleanup()
+
+	cases := []struct {
+		name string
+		dur  string
+	}{
+		{"zero seconds", "0s"},
+		{"zero hours", "0h"},
+		{"negative", "-1h"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+				Name: "build_prune",
+				Arguments: map[string]any{
+					"keep_last":  1,
+					"confirm":    true,
+					"older_than": c.dur,
+				},
+			})
+			if err != nil {
+				t.Fatalf("CallTool: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("older_than=%q must NOT bypass the footgun guard; "+
+					"got IsError=false (would have wiped everything-but-newest)", c.dur)
+			}
+			body := extractText(t, res)
+			if !contains(body, "would wipe everything except") {
+				t.Errorf("error should mention the footgun; got %q", body)
+			}
+		})
+	}
+}
+
 // TestBuildPrune_BadDuration: invalid older_than surfaces a clear
 // validation error instead of silently being ignored.
 func TestBuildPrune_BadDuration(t *testing.T) {

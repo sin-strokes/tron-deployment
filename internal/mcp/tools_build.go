@@ -114,11 +114,35 @@ func buildInspectTool(ctx context.Context, _ *mcp.CallToolRequest, args buildIns
 }
 
 func buildPruneTool(ctx context.Context, _ *mcp.CallToolRequest, args buildPruneArgs) (*mcp.CallToolResult, any, error) {
+	// Parse older_than FIRST so subsequent guards see the actual
+	// effective duration, not the raw string. An LLM passing
+	// older_than="0s" / "0h" / "-1h" otherwise sneaks past the
+	// string-based "is this filter set" check while the parsed
+	// value ends up being silently ignored by selectForPrune
+	// (which gates on `OlderThan > 0`). Net: the footgun guard
+	// below would not fire and we'd wipe everything-but-keep_last
+	// — the exact LLM mistake the guard exists to prevent.
+	var olderThan time.Duration
+	if args.OlderThan != "" {
+		d, err := time.ParseDuration(args.OlderThan)
+		if err != nil {
+			return errResult(output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+				"older_than %q is not a valid Go duration: %s", args.OlderThan, err.Error()).
+				WithSuggestions("Use Go duration syntax: '24h', '168h' (= 7 days), '720h' (= 30 days)"))
+		}
+		olderThan = d
+	}
+	// Effective scoping flag: true only when older_than actually
+	// narrows the candidate set. Zero or negative durations are
+	// treated as "not set" so the guards below catch the bypass
+	// the previous review identified.
+	hasOlderThan := olderThan > 0
+
 	// Same friendly guard as the CLI: empty policy is almost always
 	// an LLM mistake, not an intent to no-op.
-	if !args.All && !args.OrphanOnly && args.OlderThan == "" && args.KeepLast == 0 {
+	if !args.All && !args.OrphanOnly && !hasOlderThan && args.KeepLast == 0 {
 		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError,
-			"prune needs at least one of: all, orphan_only, older_than, keep_last").
+			"prune needs at least one of: all, orphan_only, older_than (>0), keep_last").
 			WithSuggestions(
 				"To wipe everything: build_prune with all=true confirm=true",
 				"To remove orphans only: build_prune with orphan_only=true confirm=true",
@@ -131,26 +155,15 @@ func buildPruneTool(ctx context.Context, _ *mcp.CallToolRequest, args buildPrune
 	// down to recent". Require either all=true (explicit acknowledge)
 	// or a scoping filter (orphan_only / older_than).
 	if args.Confirm && args.KeepLast > 0 &&
-		!args.All && !args.OrphanOnly && args.OlderThan == "" {
+		!args.All && !args.OrphanOnly && !hasOlderThan {
 		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError,
 			"keep_last alone with confirm=true would wipe everything except "+
 				"the N newest entries; set all=true to acknowledge, OR "+
-				"narrow with orphan_only / older_than").
+				"narrow with orphan_only / older_than (>0)").
 			WithSuggestions(
 				"Preview first: omit confirm=true (the plan shows exactly what would be removed)",
 				"To genuinely wipe-all-but-N: all=true keep_last=N confirm=true",
 			))
-	}
-
-	var olderThan time.Duration
-	if args.OlderThan != "" {
-		d, err := time.ParseDuration(args.OlderThan)
-		if err != nil {
-			return errResult(output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
-				"older_than %q is not a valid Go duration: %s", args.OlderThan, err.Error()).
-				WithSuggestions("Use Go duration syntax: '24h', '168h' (= 7 days), '720h' (= 30 days)"))
-		}
-		olderThan = d
 	}
 
 	res, err := build.Prune(ctx, build.PruneOptions{

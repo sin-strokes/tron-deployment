@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -315,6 +316,39 @@ func TestPrune_OrphanCleansManifestEvenWithoutArtifact(t *testing.T) {
 	}
 	if _, err := os.Stat(manifestPath(m.CacheKey)); !os.IsNotExist(err) {
 		t.Errorf("orphan manifest should be removed; stat err = %v", err)
+	}
+}
+
+// TestPrune_HonorsContextCancellation is the review-pass-5 guard:
+// a cancelled ctx must stop the per-entry loop promptly, even mid-
+// plan. Without the check, Ctrl+C during a long prune (many image
+// entries with slow `docker image rm` calls) only takes effect at
+// the next docker round-trip. Plan stays populated so the caller
+// can still see what WOULD have been done.
+func TestPrune_HonorsContextCancellation(t *testing.T) {
+	withTempBaseDir(t)
+	for i := range 5 {
+		seedJARManifest(t, fmt.Sprintf("entry-%d", i), time.Now(), 100)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel BEFORE Prune to guarantee the first iteration trips the check
+
+	res, err := Prune(ctx, PruneOptions{All: true})
+	if err == nil {
+		t.Fatal("expected ctx.Err() to surface from Prune; got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled; got %v", err)
+	}
+	// Plan should still be populated (we want the caller to know
+	// what would have been removed at cancellation time).
+	if len(res.Plan) != 5 {
+		t.Errorf("Plan should still have 5 entries on cancel; got %d", len(res.Plan))
+	}
+	// Removed should be empty — we cancelled before any deletion.
+	if len(res.Removed) != 0 {
+		t.Errorf("Removed should be empty when cancelled before first iteration; got %d", len(res.Removed))
 	}
 }
 
