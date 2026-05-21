@@ -70,8 +70,10 @@ func init() {
 		"Git revision to build (HEAD, branch, tag, or sha)")
 	buildCmd.Flags().StringVar(&buildArtifactKind, "artifact", "jar",
 		"Artifact kind: 'jar' or 'image'")
-	buildCmd.Flags().StringVar(&buildJDKVersion, "jdk", "8",
-		"JDK version for the builder container (8|11|17|21)")
+	buildCmd.Flags().StringVar(&buildJDKVersion, "jdk", "",
+		"JDK version for the builder container (8|11|17|21). "+
+			"Empty defaults from platform: linux/amd64→8, linux/arm64→17 "+
+			"(java-tron's published compat matrix).")
 	buildCmd.Flags().StringVar(&buildGradleTask, "gradle-task", "",
 		"Gradle task name (defaults: 'shadowJar' for jar, 'dockerBuild' for image)")
 	buildCmd.Flags().StringArrayVar(&buildGradleArgs, "gradle-arg", nil,
