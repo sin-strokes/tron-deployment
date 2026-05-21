@@ -268,11 +268,23 @@ func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 			)
 	}
 
+	// For host builds, BuilderImageDigest already captures the exact
+	// JVM in use (sha256 of `java -version` output). Including
+	// req.JDKVersion in the key on top of that would fragment the
+	// cache pointlessly: two `--builder host` invocations with the
+	// same actual JDK but different --jdk flags (e.g. --jdk 8 vs
+	// --jdk 17, both falling back to whatever the host has)
+	// rebuild identically. Drop JDKVersion from the host-builder
+	// key so cache hits work as expected.
+	keyJDK := req.JDKVersion
+	if req.Builder == "host" {
+		keyJDK = ""
+	}
 	key := CacheKey{
 		GitRevision:        src.ResolvedRevision,
 		PatchHash:          src.PatchHash,
 		BuilderImageDigest: imageDigest,
-		JDKVersion:         req.JDKVersion,
+		JDKVersion:         keyJDK,
 		ArtifactKind:       req.ArtifactKind,
 		GradleTask:         req.GradleTask,
 		GradleArgs:         append([]string(nil), req.GradleArgs...),

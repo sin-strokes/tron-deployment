@@ -125,6 +125,22 @@ func buildPruneTool(ctx context.Context, _ *mcp.CallToolRequest, args buildPrune
 				"To remove entries older than a week: build_prune with older_than='168h' confirm=true",
 			))
 	}
+	// Footgun guard, MCP variant of the CLI's same check: keep_last
+	// alone + confirm=true deletes every entry except the N newest,
+	// which is a near-wipe an LLM might invoke under "trim cache
+	// down to recent". Require either all=true (explicit acknowledge)
+	// or a scoping filter (orphan_only / older_than).
+	if args.Confirm && args.KeepLast > 0 &&
+		!args.All && !args.OrphanOnly && args.OlderThan == "" {
+		return errResult(output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+			"keep_last alone with confirm=true would wipe everything except "+
+				"the N newest entries; set all=true to acknowledge, OR "+
+				"narrow with orphan_only / older_than").
+			WithSuggestions(
+				"Preview first: omit confirm=true (the plan shows exactly what would be removed)",
+				"To genuinely wipe-all-but-N: all=true keep_last=N confirm=true",
+			))
+	}
 
 	var olderThan time.Duration
 	if args.OlderThan != "" {

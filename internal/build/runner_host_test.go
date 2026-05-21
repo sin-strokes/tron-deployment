@@ -84,6 +84,48 @@ func TestFindLargestFatJAR(t *testing.T) {
 	}
 }
 
+// TestFindLargestFatJAR_NestedAndDecoyPaths is the review-pass-4
+// guard: the path filter MUST match `find -path '*/build/libs/*.jar'`
+// exactly, NOT just contain `/build/libs/` anywhere. Without this
+// rigour a host-built JAR and a docker-built JAR could pick
+// different files out of an unusual layout, breaking the cross-
+// builder cache-reuse invariant the host runner relies on.
+func TestFindLargestFatJAR_NestedAndDecoyPaths(t *testing.T) {
+	srcDir := t.TempDir()
+	mkJAR := func(rel string, size int) {
+		t.Helper()
+		p := filepath.Join(srcDir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, make([]byte, size), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Correct path — small file. Should win because the others
+	// don't match the glob.
+	mkJAR("framework/build/libs/FullNode.jar", 500)
+	// `build/libs/sub/x.jar` — `build/libs` is in the path but not
+	// the immediate parent. `find -path '*/build/libs/*.jar'`
+	// matches only one level under libs/, so this should NOT win.
+	mkJAR("framework/build/libs/sub/nested.jar", 9999)
+	// `staging/build/libs-archive/old.jar` — has `build/` and
+	// `libs-archive/` but no `build/libs/` segment. Must NOT match.
+	mkJAR("staging/build/libs-archive/old.jar", 9999)
+	// `foo/libs/build/x.jar` — has segments out of order. Must NOT
+	// match (docker glob requires build/libs/ in that order).
+	mkJAR("foo/libs/build/wrong-order.jar", 9999)
+
+	got, err := findLargestFatJAR(srcDir)
+	if err != nil {
+		t.Fatalf("findLargestFatJAR: %v", err)
+	}
+	want := filepath.Join(srcDir, "framework/build/libs/FullNode.jar")
+	if got != want {
+		t.Errorf("strict glob mismatch: got %q; want %q (cross-builder cache would diverge)", got, want)
+	}
+}
+
 // TestFindLargestFatJAR_NoMatches: when gradle produced nothing
 // under */build/libs/*.jar, return a specific error so the caller
 // can surface the right BUILD_FAILED message.
@@ -117,6 +159,45 @@ func TestHostRunner_RequiresGradlew(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "gradle wrapper not present") {
 		t.Errorf("error %q should explain why; got %v", err, err)
+	}
+}
+
+// TestResolveBuild_HostBuilder_JDKVersionDoesNotFragmentCacheKey
+// pins the review-pass-4 fix: with Builder=host, the host's actual
+// JDK is captured in BuilderImageDigest (sha256 of `java -version`).
+// Including req.JDKVersion in the CacheKey on top of that would
+// fragment the cache pointlessly — two host builds with --jdk 8 vs
+// --jdk 17 on the SAME host (same actual JVM) would rebuild
+// identically. The fix omits JDKVersion from the key when
+// Builder=host so cache hits work as expected.
+func TestResolveBuild_HostBuilder_JDKVersionDoesNotFragmentCacheKey(t *testing.T) {
+	if _, err := exec.LookPath("java"); err != nil {
+		t.Skip("java not on PATH; host builder cache-key test needs a JVM")
+	}
+
+	srcDir := initGitRepo(t)
+	mk := func(jdk string) string {
+		r, err := resolveBuild(context.Background(), Request{
+			SourcePath:   srcDir,
+			RevisionSpec: "HEAD",
+			ArtifactKind: "jar",
+			JDKVersion:   jdk,
+			Builder:      "host",
+			GradleTask:   "shadowJar",
+			Platform:     "linux/amd64",
+		})
+		if err != nil {
+			t.Fatalf("resolveBuild jdk=%q: %v", jdk, err)
+		}
+		return r.cacheKeyStr
+	}
+
+	keyA := mk("8")
+	keyB := mk("17")
+	if keyA != keyB {
+		t.Errorf("host-builder cache key changes with --jdk: %q vs %q "+
+			"(BuilderImageDigest already captures the actual JVM; --jdk should be ignored)",
+			keyA, keyB)
 	}
 }
 

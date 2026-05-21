@@ -176,6 +176,71 @@ func TestBuildPrune_DryRunPlan(t *testing.T) {
 	}
 }
 
+// TestBuildPrune_KeepLastAloneConfirmRejected is the review-pass-4
+// footgun guard: `keep_last=N confirm=true` with no other filter
+// would wipe everything except the N newest entries — too easy for
+// an LLM to invoke under a prompt like "trim cache to recent
+// entries". The guard requires either all=true (explicit) or a
+// scoping filter (orphan_only / older_than) before this near-wipe.
+//
+// Dry-run (confirm omitted) MUST still be allowed: the plan output
+// is the obvious affordance for an operator surveying what
+// keep_last would remove.
+func TestBuildPrune_KeepLastAloneConfirmRejected(t *testing.T) {
+	session, cleanup := newConnectedPair(t)
+	defer cleanup()
+
+	t.Run("rejects keep_last+confirm with no other filter", func(t *testing.T) {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+			Name: "build_prune",
+			Arguments: map[string]any{
+				"keep_last": 1,
+				"confirm":   true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("CallTool: %v", err)
+		}
+		if !res.IsError {
+			t.Fatal("keep_last+confirm without scope should set IsError=true")
+		}
+		body := extractText(t, res)
+		if !contains(body, "would wipe everything except") {
+			t.Errorf("error message should explain the footgun; got %q", body)
+		}
+	})
+
+	t.Run("allows keep_last dry-run (no confirm)", func(t *testing.T) {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+			Name:      "build_prune",
+			Arguments: map[string]any{"keep_last": 1},
+		})
+		if err != nil {
+			t.Fatalf("CallTool: %v", err)
+		}
+		if res.IsError {
+			t.Errorf("keep_last dry-run should succeed; got error %s", extractText(t, res))
+		}
+	})
+
+	t.Run("allows keep_last + all + confirm (explicit ack)", func(t *testing.T) {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+			Name: "build_prune",
+			Arguments: map[string]any{
+				"keep_last": 1,
+				"all":       true,
+				"confirm":   true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("CallTool: %v", err)
+		}
+		if res.IsError {
+			t.Errorf("keep_last+all+confirm should succeed (explicit acknowledge); got %s", extractText(t, res))
+		}
+	})
+}
+
 // TestBuildPrune_BadDuration: invalid older_than surfaces a clear
 // validation error instead of silently being ignored.
 func TestBuildPrune_BadDuration(t *testing.T) {

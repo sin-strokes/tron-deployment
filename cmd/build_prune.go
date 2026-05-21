@@ -96,6 +96,27 @@ func runBuildPrune(cmd *cobra.Command, _ []string) error {
 				"To remove entries older than a week: trond build prune --older-than 168h --confirm",
 			)
 	}
+	// Footgun guard: `--keep-last N --confirm` with NO other filter
+	// is equivalent to "delete every entry except the N newest" —
+	// a near-wipe operation that looks small at a glance. Require
+	// either an explicit second filter (--orphan / --older-than)
+	// to scope what gets pruned, OR an explicit --all to acknowledge
+	// the near-wipe intent. Dry-run is exempt: the plan output
+	// shows exactly what would be deleted, which IS the obvious
+	// affordance an interactive operator wants.
+	if buildPruneConfirm && buildPruneKeepLast > 0 &&
+		!buildPruneAll && !buildPruneOrphan && buildPruneOlderThan == 0 {
+		return output.NewError("VALIDATION_ERROR", output.ExitValidationError,
+			"--keep-last alone with --confirm would wipe everything except "+
+				"the N newest entries; combine with --all to acknowledge, OR "+
+				"narrow with --orphan / --older-than").
+			WithSuggestions(
+				"Preview first: trond build prune --keep-last "+
+					fmt.Sprintf("%d", buildPruneKeepLast)+" (dry-run shows the plan)",
+				"To genuinely wipe-all-but-N: trond build prune --all --keep-last "+
+					fmt.Sprintf("%d", buildPruneKeepLast)+" --confirm",
+			)
+	}
 
 	opts := build.PruneOptions{
 		All:        buildPruneAll,

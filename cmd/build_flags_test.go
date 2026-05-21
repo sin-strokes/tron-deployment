@@ -24,7 +24,7 @@ type flagsCaptureRunner struct {
 
 func (f *flagsCaptureRunner) RunDockerBuild(
 	_ context.Context,
-	sourcePath, _ string,
+	sourcePath, _ /* outDir */, _ /* outTmpPath */ string,
 	gradleTask string,
 	gradleArgs []string,
 	env map[string]string,

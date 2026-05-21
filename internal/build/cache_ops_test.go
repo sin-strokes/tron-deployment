@@ -318,6 +318,123 @@ func TestPrune_OrphanCleansManifestEvenWithoutArtifact(t *testing.T) {
 	}
 }
 
+// TestPrune_AcquiresCacheLock pins the review-pass-4 race fix: Prune
+// MUST hold the same per-key flock that builder.Run() acquires, so a
+// concurrent build of the entry being pruned cannot interleave with
+// our manifest+artifact deletion. Verified by holding the flock
+// externally and observing Prune's "lock unavailable" skip path.
+//
+// (We can't easily reproduce the data corruption directly in a unit
+// test — too much process orchestration. This test pins the
+// contract: "if the lock can't be acquired, the entry is skipped",
+// which is the post-condition that protects the cache.)
+func TestPrune_AcquiresCacheLock(t *testing.T) {
+	withTempBaseDir(t)
+	if err := EnsureCacheDirs(); err != nil {
+		t.Fatalf("EnsureCacheDirs: %v", err)
+	}
+	locked := seedJARManifest(t, "locked-by-build", time.Now(), 100)
+
+	// Simulate a concurrent build: hold the flock for this entry's
+	// key. Prune must observe the lock and skip without touching
+	// anything.
+	release, err := AcquireCacheLock(CacheDir(), locked.CacheKey)
+	if err != nil {
+		t.Fatalf("test AcquireCacheLock: %v", err)
+	}
+	t.Cleanup(release)
+
+	res, err := Prune(context.Background(), PruneOptions{All: true})
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	// Plan still lists the entry (we never released the lock until
+	// AFTER Prune returns), but Removed must NOT contain it because
+	// Prune couldn't acquire the lock.
+	if len(res.Removed) != 0 {
+		t.Errorf("Removed should be empty when lock is held externally; got %v", keys(res.Removed))
+	}
+	// And the JAR + manifest are still on disk — no partial
+	// deletion.
+	if _, statErr := os.Stat(locked.ArtifactPath); statErr != nil {
+		t.Errorf("locked JAR should be untouched; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(manifestPath(locked.CacheKey)); statErr != nil {
+		t.Errorf("locked manifest should be untouched; stat err = %v", statErr)
+	}
+}
+
+// TestPrune_FreedBytesOnlyCountsActuallyRemoved is the review-pass-4
+// regression guard: PruneResult.FreedBytes MUST reflect bytes
+// actually reclaimed, not the plan's optimistic total. Otherwise an
+// MCP agent surfacing "freed N bytes" would report a number that
+// doesn't match the bytes the OS actually got back.
+//
+// Constructed scenario: two entries in the plan, simulate partial
+// failure by pre-deleting one entry's manifest under our feet so
+// removeEntry's os.Remove(manifestPath) fails. The successful entry
+// contributes its bytes; the failed entry does not.
+func TestPrune_FreedBytesOnlyCountsActuallyRemoved(t *testing.T) {
+	withTempBaseDir(t)
+	good := seedJARManifest(t, "good", time.Now(), 500)
+	bad := seedJARManifest(t, "bad", time.Now().Add(-time.Hour), 1000)
+
+	// Sabotage the "bad" entry's artifact: swap the JAR file for a
+	// non-empty directory at the same path. removeEntry's
+	// os.Remove(e.ArtifactPath) refuses to delete a non-empty dir
+	// → entry removal fails. ListEntries still parses the (intact)
+	// manifest, so the entry IS in the plan but won't end up in
+	// Removed. Faithfully models real failures the reviewer flagged
+	// (docker rmi wedged, fs permissions, etc.).
+	if err := os.Remove(bad.ArtifactPath); err != nil {
+		t.Fatalf("setup: remove jar for sabotage: %v", err)
+	}
+	if err := os.MkdirAll(bad.ArtifactPath, 0o755); err != nil {
+		t.Fatalf("setup: mkdir jar path for sabotage: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(bad.ArtifactPath, "wedge"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: wedge file: %v", err)
+	}
+
+	res, err := Prune(context.Background(), PruneOptions{All: true})
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	// Plan has both entries; Removed has only the good one.
+	if len(res.Plan) != 2 {
+		t.Errorf("Plan should list 2 entries; got %d", len(res.Plan))
+	}
+	if len(res.Removed) != 1 || res.Removed[0].CacheKey != "good" {
+		t.Fatalf("Removed should contain only 'good'; got %v", keys(res.Removed))
+	}
+	// THE FIX: FreedBytes must equal Removed-only sum, NOT Plan sum.
+	if res.FreedBytes != 500 {
+		t.Errorf("FreedBytes = %d; want 500 (bytes actually reclaimed, not plan total of 1500)", res.FreedBytes)
+	}
+	// And good's artifact should be gone.
+	if _, statErr := os.Stat(good.ArtifactPath); !os.IsNotExist(statErr) {
+		t.Errorf("good JAR should be deleted; stat err = %v", statErr)
+	}
+}
+
+// TestPrune_FreedBytesOnDryRunMatchesPlan: on dry-run, FreedBytes
+// reflects what WOULD be freed (== plan sum), since Removed is
+// empty by design. Without this branch in Prune, the post-Removed-
+// loop accumulation would report 0 freed for dry-runs.
+func TestPrune_FreedBytesOnDryRunMatchesPlan(t *testing.T) {
+	withTempBaseDir(t)
+	seedJARManifest(t, "a", time.Now(), 100)
+	seedJARManifest(t, "b", time.Now(), 200)
+
+	res, err := Prune(context.Background(), PruneOptions{All: true, DryRun: true})
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if res.FreedBytes != 300 {
+		t.Errorf("DryRun FreedBytes = %d; want 300 (full plan total)", res.FreedBytes)
+	}
+}
+
 // --- helpers ---
 
 func keys(entries []*Entry) []string {

@@ -244,8 +244,10 @@ type PruneOptions struct {
 // PruneResult is the structured output the CLI/MCP layer renders.
 // Plan is what WOULD be removed; Removed is what was actually
 // removed (nil when DryRun). FreedBytes is the sum of SizeBytes for
-// Removed entries (DryRun: sum over Plan, since we know what we
-// would have freed).
+// successfully-removed entries (or, on DryRun, the sum over Plan).
+// Schema contract: schemas/output/build-prune.schema.json describes
+// freed_bytes as "Total bytes reclaimed"; the post-loop recomputation
+// below honors that even when one entry's removal partially failed.
 type PruneResult struct {
 	Plan       []*Entry `json:"plan"`
 	Removed    []*Entry `json:"removed,omitempty"`
@@ -254,10 +256,25 @@ type PruneResult struct {
 }
 
 // Prune evaluates the cache against opts, builds a deletion plan, and
-// (unless DryRun) executes it. Image artifacts get a best-effort
-// `docker rmi <tag>` so the docker storage actually reclaims layers;
-// failures there don't abort the prune (the trond cache files still
-// get cleaned).
+// (unless DryRun) executes it under per-entry flocks so concurrent
+// `trond build` runs against the same cache key cannot interleave
+// with our manifest/artifact deletion. Image artifacts also get a
+// best-effort `docker rmi <tag>` so the docker storage actually
+// reclaims layers; failures there don't abort the prune (the trond
+// cache files still get cleaned).
+//
+// Concurrency invariants:
+//
+//   - The flock per cache key matches the one builder.go acquires in
+//     Run() (AcquireCacheLock). A concurrent build of the same key
+//     either finishes first (we then prune the produced artifact,
+//     unsurprising) or blocks until we release (the build then sees
+//     no manifest and rebuilds, also unsurprising). No race window
+//     where Prune deletes a half-written manifest mid-build.
+//   - Two concurrent Prune invocations on the same entry race only
+//     on the lock acquisition; the second sees the manifest already
+//     gone in removeEntry and treats it as best-effort (the
+//     errors.Is(..., os.ErrNotExist) branch).
 func Prune(ctx context.Context, opts PruneOptions) (*PruneResult, error) {
 	all, err := ListEntries(ctx, IncludeOrphans())
 	if err != nil {
@@ -269,25 +286,48 @@ func Prune(ctx context.Context, opts PruneOptions) (*PruneResult, error) {
 		Plan:   plan,
 		DryRun: opts.DryRun,
 	}
-	for _, e := range plan {
-		result.FreedBytes += e.SizeBytes
-	}
 	if opts.DryRun {
+		// Dry-run reports what WOULD be freed — the plan's full
+		// size, since nothing is removed.
+		for _, e := range plan {
+			result.FreedBytes += e.SizeBytes
+		}
 		return result, nil
 	}
 
 	for _, e := range plan {
-		if err := removeEntry(ctx, e); err != nil {
+		// FR-015 lock — same key the builder grabs in Run(). We use
+		// the non-blocking try-variant: if a build holds this key
+		// right now, prune skips the entry rather than waiting (a
+		// background prune should NEVER stall an interactive build).
+		release, ok, lockErr := TryAcquireCacheLock(CacheDir(), e.CacheKey)
+		if lockErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"warning: prune skip %s — lock open failed: %v\n",
+				e.CacheKey, lockErr)
+			continue
+		}
+		if !ok {
+			fmt.Fprintf(os.Stderr,
+				"info: prune skip %s — build in progress for this key\n",
+				e.CacheKey)
+			continue
+		}
+		err := removeEntry(ctx, e)
+		release()
+		if err != nil {
 			// Don't abort the whole prune — one wedged docker rmi
 			// shouldn't block the rest of the cleanup. Surface to
-			// stderr; the result.Removed list reflects what
-			// succeeded.
+			// stderr; result.Removed + FreedBytes reflect only what
+			// actually succeeded so the JSON contract holds even
+			// after partial failures.
 			fmt.Fprintf(os.Stderr,
 				"warning: prune partial failure for %s: %v\n",
 				e.CacheKey, err)
 			continue
 		}
 		result.Removed = append(result.Removed, e)
+		result.FreedBytes += e.SizeBytes
 	}
 	return result, nil
 }

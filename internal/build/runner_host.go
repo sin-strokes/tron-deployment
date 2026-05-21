@@ -189,12 +189,21 @@ func hostBuildEnv(intent map[string]string) []string {
 	return append(base, allowedEnvPassthrough(intent)...)
 }
 
-// findLargestFatJAR walks the source tree for `*/build/libs/*.jar`
-// and returns the largest one. Same rule the docker runner's shell
-// script implements via `find ... | xargs ls -S | head -n1`. The
-// shadow plugin's fat JAR is always larger than thin module jars of
-// the same task; ValidateJARMainClass downstream rejects any
-// non-FullNode JAR that wins this heuristic.
+// findLargestFatJAR walks the source tree for jars whose IMMEDIATE
+// parent is `build/libs/` and returns the largest one. Matches the
+// docker runner's `find ... -path '*/build/libs/*.jar'` glob: that
+// glob requires `/build/libs/` to be the path segment immediately
+// preceding the jar filename (gradle's standard output layout), NOT
+// just any segment in the path. A nested `build/libs/sub/x.jar`
+// is intentionally ignored by both runners — and a
+// `staging/build/libs-archive/old.jar` is correctly excluded too —
+// so a host-built JAR and a docker-built JAR pick the same file out
+// of a multi-module gradle layout (cross-builder cache reuse depends
+// on byte-identical artifacts).
+//
+// The shadow plugin's fat JAR is always larger than thin module
+// jars of the same task; ValidateJARMainClass downstream rejects
+// any non-FullNode JAR that wins this size heuristic.
 func findLargestFatJAR(srcPath string) (string, error) {
 	type cand struct {
 		path string
@@ -214,9 +223,16 @@ func findLargestFatJAR(srcPath string) (string, error) {
 		if !strings.HasSuffix(p, ".jar") {
 			return nil
 		}
-		// Only count jars under any `build/libs/` segment. Matches
-		// the docker script's `-path '*/build/libs/*.jar'`.
-		if !strings.Contains(p, string(os.PathSeparator)+"build"+string(os.PathSeparator)+"libs"+string(os.PathSeparator)) {
+		// Match `find -path '*/build/libs/*.jar'` exactly: the
+		// jar's IMMEDIATE parent directory must be `build/libs`
+		// (relative to some ancestor). filepath.Dir trims the
+		// filename; the parent's last two components must be
+		// "build" and "libs" in that order.
+		parent := filepath.Dir(p)
+		if filepath.Base(parent) != "libs" {
+			return nil
+		}
+		if filepath.Base(filepath.Dir(parent)) != "build" {
 			return nil
 		}
 		info, err := d.Info()

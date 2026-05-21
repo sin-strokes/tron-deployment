@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tronprotocol/tron-deployment/internal/build"
+	"github.com/tronprotocol/tron-deployment/internal/paths"
 )
 
 // Cobra-layer tests for `trond build list / inspect / prune`. The
@@ -78,6 +80,71 @@ func TestSortEntries(t *testing.T) {
 	t.Run("invalid order returns error", func(t *testing.T) {
 		if err := sortEntries(mkEntries(), "alphabetical"); err == nil {
 			t.Error("expected error for unknown sort order")
+		}
+	})
+}
+
+// TestBuildPrune_KeepLastFootgunGuard pins the review-pass-4 CLI
+// guard: --keep-last with --confirm but no scoping filter would
+// wipe everything-but-N — required either --all (explicit
+// acknowledge) or a scoping filter (--orphan / --older-than). Dry-
+// run is exempt; the plan output is the affordance.
+//
+// Isolates paths.BaseDir to a TempDir so the sub-tests that pass the
+// guard and reach the real Prune call don't walk the developer's
+// actual ~/.trond cache — a footgun that would have deleted real
+// build artifacts during test runs without this isolation.
+func TestBuildPrune_KeepLastFootgunGuard(t *testing.T) {
+	dir := t.TempDir()
+	paths.SetBaseDir(dir)
+	t.Cleanup(func() { paths.SetBaseDir("") })
+
+	// Reset flag state between sub-tests. Cobra StringVars/BoolVars
+	// persist between Execute() calls because they're package vars,
+	// so explicitly clear before each scenario.
+	reset := func() {
+		buildPruneAll = false
+		buildPruneOlderThan = 0
+		buildPruneKeepLast = 0
+		buildPruneOrphan = false
+		buildPruneConfirm = false
+	}
+
+	t.Run("--keep-last --confirm alone is rejected", func(t *testing.T) {
+		reset()
+		buildPruneKeepLast = 1
+		buildPruneConfirm = true
+		err := runBuildPrune(buildPruneCmd, nil)
+		if err == nil {
+			t.Fatal("expected validation error")
+		}
+		if !strings.Contains(err.Error(), "would wipe everything except") {
+			t.Errorf("error %q should mention the footgun", err)
+		}
+	})
+
+	t.Run("--keep-last (dry-run) is allowed", func(t *testing.T) {
+		reset()
+		buildPruneKeepLast = 1
+		// confirm=false → dry-run path; should NOT trigger the guard.
+		err := runBuildPrune(buildPruneCmd, nil)
+		// May succeed or fail at the actual Prune call (empty cache
+		// dir in test) — what we're pinning is that the guard does
+		// not fire. So the error, if any, must NOT mention the
+		// footgun string.
+		if err != nil && strings.Contains(err.Error(), "would wipe everything except") {
+			t.Errorf("dry-run keep_last triggered the footgun guard; got %q", err)
+		}
+	})
+
+	t.Run("--keep-last --all --confirm is allowed (explicit)", func(t *testing.T) {
+		reset()
+		buildPruneKeepLast = 1
+		buildPruneAll = true
+		buildPruneConfirm = true
+		err := runBuildPrune(buildPruneCmd, nil)
+		if err != nil && strings.Contains(err.Error(), "would wipe everything except") {
+			t.Errorf("explicit --all+keep-last+confirm triggered the footgun guard; got %q", err)
 		}
 	})
 }
