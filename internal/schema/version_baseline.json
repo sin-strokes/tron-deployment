@@ -1,13 +1,17 @@
 {
-  "schema_version": "1.2.0",
+  "schema_version": "1.3.0",
   "entries": [
     {
       "name": "apply",
-      "hash": "274ee04ddb36fc57068616ddd758afd6389fddcdde721131391a5236967a29dd"
+      "hash": "cef5ef5836418d685d454ba43ef914118636363b92595d75b5f32c1e23071f7a"
     },
     {
       "name": "auto-heal",
       "hash": "1a1108e340bf94c7d568f27245183245fce793e3527383159c33f951adbbd00e"
+    },
+    {
+      "name": "build",
+      "hash": "96bd53e568420ac6e5149abab4fcc16a0d4e6f50e16c611f1828e8d0e11708f2"
     },
     {
       "name": "config-diff",

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/build.schema.json",
+  "title": "trond build output",
+  "description": "Returned by `trond build ... -o json`. Same shape on first build (cache_hit=false) and cache hit (cache_hit=true, duration_ms close to 0). On failure, the error envelope shape (schemas/output/error.schema.json) is emitted instead.",
+  "type": "object",
+  "required": [
+    "cache_key",
+    "source_revision",
+    "dirty",
+    "artifact_kind",
+    "builder_image",
+    "jdk_version",
+    "gradle_task",
+    "builder",
+    "cache_hit",
+    "duration_ms",
+    "created_at"
+  ],
+  "properties": {
+    "cache_key": {
+      "type": "string",
+      "description": "Content-addressed identifier of this build. Format: <git-sha7>-b<digest6>[+dirty-<patch8>][-x<extra6>]. Same source + same builder image + same task + same args yields the same key.",
+      "pattern": "^[0-9a-f]{12}-b[0-9a-f]{8}(\\+dirty-[0-9a-f]{8})?(-x[0-9a-f]{8})?$"
+    },
+    "source_revision": {
+      "type": "string",
+      "description": "Full git sha resolved from the requested revision spec.",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "dirty": {
+      "type": "boolean",
+      "description": "True when the source working tree had uncommitted edits or untracked files at build time."
+    },
+    "artifact_kind": {
+      "type": "string",
+      "enum": ["jar", "image"]
+    },
+    "artifact_path": {
+      "type": "string",
+      "description": "Absolute path to the produced JAR (artifact_kind=jar)."
+    },
+    "image_tag": {
+      "type": "string",
+      "description": "Locally tagged Docker image reference (artifact_kind=image)."
+    },
+    "sha256": {
+      "type": "string",
+      "description": "sha256 of the produced JAR contents (artifact_kind=jar).",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "builder_image": {
+      "type": "string",
+      "description": "Fully-qualified builder image reference, including @sha256: digest portion."
+    },
+    "jdk_version": {
+      "type": "string",
+      "enum": ["8", "11", "17", "21"]
+    },
+    "gradle_task": {
+      "type": "string"
+    },
+    "builder": {
+      "type": "string",
+      "enum": ["docker", "host"]
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["linux/amd64", "linux/arm64"],
+      "description": "Docker --platform the builder ran under. Per java-tron's compat matrix: linux/amd64 → JDK 8, linux/arm64 → JDK 17."
+    },
+    "cache_hit": {
+      "type": "boolean",
+      "description": "True when this invocation returned a previously-built artifact without re-running gradle."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall-clock time of this invocation. Cache hits return durations < 200ms."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp the manifest was first written (NOT this invocation's timestamp on a cache hit)."
+    }
+  }
+}

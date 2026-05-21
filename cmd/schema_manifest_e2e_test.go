@@ -33,8 +33,8 @@ func TestE2E_SchemaManifestReverse(t *testing.T) {
 	out := runTrondCtx(ctx, t, env, "schema", "--output", "json")
 
 	var manifest struct {
-		SchemaVersion string `json:"schema_version"`
-		Tool          string `json:"tool"`
+		SchemaVersion string            `json:"schema_version"`
+		Tool          string            `json:"tool"`
 		Commands      []manifestCommand `json:"commands"`
 	}
 	if err := json.Unmarshal(out, &manifest); err != nil {
@@ -59,12 +59,12 @@ func TestE2E_SchemaManifestReverse(t *testing.T) {
 }
 
 type manifestCommand struct {
-	Name        string             `json:"name"`
-	FullName    string             `json:"full_name"`
-	Use         string             `json:"use"`
-	Aliases     []string           `json:"aliases"`
-	Flags       []manifestFlag     `json:"flags"`
-	Subcommands []manifestCommand  `json:"subcommands"`
+	Name        string            `json:"name"`
+	FullName    string            `json:"full_name"`
+	Use         string            `json:"use"`
+	Aliases     []string          `json:"aliases"`
+	Flags       []manifestFlag    `json:"flags"`
+	Subcommands []manifestCommand `json:"subcommands"`
 }
 
 type manifestFlag struct {

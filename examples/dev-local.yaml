@@ -1,0 +1,52 @@
+# Dev inner loop: edit java-tron source, redeploy via trond.
+#
+# Usage:
+#   trond apply --intent examples/dev-local.yaml --auto-approve -o json
+#
+# What trond does (spec/002-trond-build-pipeline):
+#   1. Validates this intent.
+#   2. Resolves build.source (relative to THIS file's directory).
+#   3. Resolves the git revision (HEAD picks up dirty edits, folded
+#      into the cache key so each diff produces a unique artifact).
+#   4. Runs gradle inside a pinned eclipse-temurin:8-jdk container,
+#      produces a fat JAR under ~/.trond/builds/out/<key>.jar.
+#   5. Renders the systemd unit to ExecStart the built JAR directly.
+#   6. Starts (or hot-restarts) the node.
+#
+# Re-running with NO source changes hits cache and finishes in seconds.
+# Run `trond build prune --keep 3` to bound cache disk usage.
+
+name: dev-fullnode
+network: nile
+
+target:
+  type: local
+  auto_ports: true
+  # runtime: omitted on purpose. Build intents default to runtime=jar
+  # (Phase 2 wires only the jar artifact end-to-end); Phase 3 will lift
+  # this once `build.artifact: image` lands in the compose render path.
+  # Setting it explicitly here would just duplicate the default.
+
+nodes:
+  - type: fullnode
+    install_path: /tmp/trond-dev/dev-fullnode
+    process_manager: systemd
+    system_user: tron
+    resources:
+      memory: 4G
+    # ports: omitted on purpose — target.auto_ports above grabs free
+    # OS ports so concurrent test enclaves don't fight over 8090/50051.
+
+    build:
+      # Adjust to wherever your java-tron checkout lives.
+      source: ../java-tron
+      # Everything else defaults sensibly:
+      #   revision: HEAD
+      #   platform: <host arch>     (amd64 → linux/amd64, arm64 → linux/arm64)
+      #   jdk:      <matching JDK>  (amd64 → 8, arm64 → 17 — java-tron matrix)
+      #   artifact: jar
+      #   builder:  docker
+      # Override any of them explicitly to cross-build (uses QEMU
+      # emulation on a mismatched host — 3-5× slower but functional).
+      gradle_args:
+        - --no-daemon

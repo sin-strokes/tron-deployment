@@ -26,6 +26,15 @@ type ManagedNode struct {
 	// so test harnesses can filter via `trond list --label key=value`
 	// without touching the original intent file.
 	Labels map[string]string `json:"labels,omitempty"`
+
+	// BuildCacheKey records the content-addressed build that produced
+	// the artifact currently deployed for this node. Empty when the
+	// node consumed a pre-built image or jar source. `trond build
+	// prune` (FR-018) cross-references this field and refuses to
+	// delete an artifact a running node depends on. Per spec/002 the
+	// stored value is the full cache key (`<sha>-b<digest>[+dirty-...]`),
+	// not just a git revision.
+	BuildCacheKey string `json:"build_cache_key,omitempty"`
 }
 
 // NodeTarget is the target info stored in state (subset of intent.Target).

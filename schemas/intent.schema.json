@@ -159,7 +159,8 @@
         "entrypoint": { "type": "array", "items": { "type": "string" } },
         "logging": { "$ref": "#/$defs/Logging" },
         "shm_size": { "type": "string" },
-        "jar": { "$ref": "#/$defs/JarSource" }
+        "jar": { "$ref": "#/$defs/JarSource" },
+        "build": { "$ref": "#/$defs/BuildSpec" }
       },
       "if": {
         "properties": { "type": { "const": "witness" } }
@@ -169,6 +170,64 @@
           { "required": ["witness_key_env"] },
           { "required": ["witness_key"] }
         ]
+      }
+    },
+    "BuildSpec": {
+      "type": "object",
+      "description": "Produce the deploy artifact from a local java-tron source tree. Mutually exclusive with `image:` and `jar:` — a node has exactly one artifact source. See specs/002-trond-build-pipeline/.",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Path to a java-tron source tree. Relative paths resolve against the intent file's directory (FR-021)."
+        },
+        "revision": {
+          "type": "string",
+          "description": "Git revision: HEAD (default, honors dirty state), branch, tag, or sha."
+        },
+        "jdk": {
+          "type": "string",
+          "enum": ["8", "11", "17", "21"],
+          "description": "Builder container JDK version. Defaults to 8."
+        },
+        "artifact": {
+          "type": "string",
+          "enum": ["jar", "image"],
+          "description": "What to produce. Phase 2 supports jar only; image is Phase 3."
+        },
+        "image_tag": {
+          "type": "string",
+          "description": "Local docker tag to apply when artifact = image. Required in that case. Validated against Docker reference format."
+        },
+        "builder": {
+          "type": "string",
+          "enum": ["docker", "host"],
+          "description": "Where to run gradle. docker (default) uses a pinned eclipse-temurin container; host uses the developer's local gradle."
+        },
+        "gradle_task": {
+          "type": "string",
+          "description": "Override the default gradle task name (shadowJar for jar, dockerBuild for image)."
+        },
+        "gradle_args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Extra gradle args. Restricted to a flag-name allowlist (FR-022); --init-script and similar are rejected."
+        },
+        "builder_image_override": {
+          "type": "string",
+          "description": "Bypass the embedded pin (FR-024 escape hatch). Override value participates in the cache key."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Allowlisted env vars forwarded into the build container: GRADLE_OPTS, JAVA_OPTS, GRADLE_USER_HOME, MAVEN_OPTS, ORG_GRADLE_PROJECT_*."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["linux/amd64", "linux/arm64"],
+          "description": "Docker --platform for the builder container. Empty defaults to the host arch (amd64 → JDK 8, arm64 → JDK 17 per java-tron's compat matrix). Cross-arch builds use QEMU emulation (3-5× slower)."
+        }
       }
     },
     "NetworkOverrides": {

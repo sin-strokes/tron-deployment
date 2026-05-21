@@ -38,8 +38,8 @@ func TestE2E_Recipe_DryRunMatrix(t *testing.T) {
 		expectSteps []string
 	}{
 		{
-			recipe: "nile-test-fullnode",
-			params: []string{"intent_path=" + intentPath},
+			recipe:      "nile-test-fullnode",
+			params:      []string{"intent_path=" + intentPath},
 			expectSteps: []string{"validate", "preflight", "apply", "verify"},
 		},
 		{
@@ -52,13 +52,13 @@ func TestE2E_Recipe_DryRunMatrix(t *testing.T) {
 			expectSteps: []string{"validate", "preflight"},
 		},
 		{
-			recipe: "destroy-private-network-cleanly",
-			params: []string{"network=private-dev"},
+			recipe:      "destroy-private-network-cleanly",
+			params:      []string{"network=private-dev"},
 			expectSteps: []string{"status-check", "destroy"},
 		},
 		{
-			recipe: "recover-failed-upgrade",
-			params: []string{"node=my-fullnode"},
+			recipe:      "recover-failed-upgrade",
+			params:      []string{"node=my-fullnode"},
 			expectSteps: []string{"diagnose", "rollback"},
 		},
 		{
