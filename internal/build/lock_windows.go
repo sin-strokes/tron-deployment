@@ -20,16 +20,31 @@ var windowsCacheMu = struct {
 }{keys: map[string]*sync.Mutex{}}
 
 func AcquireCacheLock(_, key string) (release func(), err error) {
+	m := getKeyMutex(key)
+	m.Lock()
+	return func() {
+		m.Unlock()
+	}, nil
+}
+
+// TryAcquireCacheLock is the non-blocking variant. Mirrors the posix
+// path's contract: returns (release, true, nil) on success,
+// (nil, false, nil) when the lock is already held in-process.
+func TryAcquireCacheLock(_, key string) (release func(), ok bool, err error) {
+	m := getKeyMutex(key)
+	if !m.TryLock() {
+		return nil, false, nil
+	}
+	return func() { m.Unlock() }, true, nil
+}
+
+func getKeyMutex(key string) *sync.Mutex {
 	windowsCacheMu.Lock()
+	defer windowsCacheMu.Unlock()
 	m, ok := windowsCacheMu.keys[key]
 	if !ok {
 		m = &sync.Mutex{}
 		windowsCacheMu.keys[key] = m
 	}
-	windowsCacheMu.Unlock()
-
-	m.Lock()
-	return func() {
-		m.Unlock()
-	}, nil
+	return m
 }

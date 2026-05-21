@@ -45,6 +45,6 @@ func BenchmarkRenderCompose(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = RenderCompose(in.Name, in, node, "", "")
+		_ = RenderCompose(in.Name, in, node, "", "", "")
 	}
 }

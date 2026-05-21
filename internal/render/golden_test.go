@@ -65,7 +65,7 @@ func TestRenderHOCON_Golden(t *testing.T) {
 				memGB = 16
 			}
 			jvmArgs := JVMArgsString(memGB, 17, node.JVM)
-			gotCompose := RenderCompose(parsed.Name, parsed, node, "", jvmArgs)
+			gotCompose := RenderCompose(parsed.Name, parsed, node, "", jvmArgs, "")
 
 			compareGolden(t, tc.golden+".conf", gotHOCON)
 			compareGolden(t, tc.golden+".compose.yaml", gotCompose)

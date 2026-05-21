@@ -27,7 +27,12 @@ func (f *fakeTarget) WriteFile(_ context.Context, _ string, _ []byte, _ os.FileM
 }
 func (f *fakeTarget) DiskFree(_ context.Context, _ string) (uint64, error) { return 1 << 40, nil }
 func (f *fakeTarget) MemTotal(_ context.Context) (uint64, error)           { return 1 << 30, nil }
-func (f *fakeTarget) String() string                                       { return "fake" }
+func (f *fakeTarget) PutFile(_ context.Context, _, _ string) error         { return nil }
+func (f *fakeTarget) Sha256IfExists(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (f *fakeTarget) CommandExists(_ context.Context, _ string) bool { return true }
+func (f *fakeTarget) String() string                                 { return "fake" }
 
 func TestApply_NoOpWhenIntentHashMatches(t *testing.T) {
 	parsed := minimalIntent()

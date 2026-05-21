@@ -95,7 +95,7 @@ func runRender(cmd *cobra.Command, args []string) error {
 		// Render runtime artifacts
 		var composeYAML, systemdUnit string
 		if parsed.Target.Runtime == "docker" || parsed.Target.Runtime == "" {
-			composeYAML = render.RenderCompose(parsed.Name, parsed, &node, "", jvmArgs)
+			composeYAML = render.RenderCompose(parsed.Name, parsed, &node, "", jvmArgs, "")
 		}
 		if parsed.Target.Runtime == "jar" {
 			systemdUnit = render.RenderSystemdUnit(parsed, &node, jvmArgs, "", "")

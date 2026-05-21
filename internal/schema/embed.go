@@ -43,7 +43,10 @@ import (
 //	1.3.0 — add build schema (new `trond build` command + intent
 //	        `build:` block; state node entry gains optional
 //	        `build_cache_key`).
-const SchemaVersion = "1.3.0"
+//	1.4.0 — add build-list / build-inspect / build-prune schemas
+//	        (new `trond build list/inspect/prune` cache mgmt
+//	        subcommands; existing schemas unchanged).
+const SchemaVersion = "1.4.0"
 
 // JSONSchemaURLBase is the canonical URL prefix for individual output
 // schema files. Embedded $id values inside each schema mirror this so

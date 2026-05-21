@@ -122,6 +122,50 @@ func TestCacheKey_PlatformLinuxAmd64IsCanonical(t *testing.T) {
 	}
 }
 
+// TestCacheKey_ImageStrategyChangesKey is the Phase 5d guard: two
+// image builds with identical source / pin / platform but different
+// image_strategy (gradle vs jar-wrap) MUST produce distinct cache
+// keys. Otherwise gradle and jar-wrap would clobber each other's
+// images/<key>.json bookkeeping.
+func TestCacheKey_ImageStrategyChangesKey(t *testing.T) {
+	base := CacheKey{
+		GitRevision:        "8f4e2a3c1234567890abcdef1234567890abcdef",
+		BuilderImageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		JDKVersion:         "8",
+		ArtifactKind:       "image",
+		Platform:           "linux/amd64",
+		GradleTask:         "dockerBuild",
+		ImageStrategy:      "gradle",
+	}
+	other := base
+	other.ImageStrategy = "jar-wrap"
+	if base.String() == other.String() {
+		t.Fatal("different image strategies must produce different cache keys")
+	}
+}
+
+// TestCacheKey_ImageStrategyIgnoredForJAR asserts ImageStrategy
+// doesn't pollute the JAR cache key. A jar build's key is
+// independent of any image-strategy value, so the "jar produced by
+// the jar-wrap path" and "jar produced standalone" hit the same
+// cache entry.
+func TestCacheKey_ImageStrategyIgnoredForJAR(t *testing.T) {
+	base := CacheKey{
+		GitRevision:        "8f4e2a3c1234567890abcdef1234567890abcdef",
+		BuilderImageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		JDKVersion:         "8",
+		ArtifactKind:       "jar",
+		GradleTask:         "shadowJar",
+		ImageStrategy:      "", // empty
+	}
+	other := base
+	other.ImageStrategy = "jar-wrap" // wouldn't apply, but might leak through
+	if base.String() != other.String() {
+		t.Errorf("ImageStrategy must NOT affect JAR cache keys: %q vs %q",
+			base.String(), other.String())
+	}
+}
+
 // TestCacheKey_OverrideDigestStable asserts that an override path
 // (--builder-image-override) still produces a stable, deterministic
 // 6-char prefix in the cache key.

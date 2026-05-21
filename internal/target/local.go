@@ -2,10 +2,13 @@ package target
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -32,6 +35,79 @@ func (t *LocalTarget) Upload(_ context.Context, localPath, remotePath string) er
 	// Local target: just copy the file
 	return copyFile(localPath, remotePath)
 }
+
+// PutFile is the local-target sibling of SSHTarget.PutFile: same-fs
+// copy with atomic install (write `<remotePath>.tmp`, rename).
+// localPath == remotePath is a no-op — the Phase 4 build flow uses
+// this when the artifact already lives at the cache path and apply
+// just needs to declare "this IS where the artifact is on the
+// target".
+func (t *LocalTarget) PutFile(_ context.Context, localPath, remotePath string) error {
+	if localPath == remotePath {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(remotePath), 0o755); err != nil {
+		return fmt.Errorf("mkdir parent of %s: %w", remotePath, err)
+	}
+	src, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", localPath, err)
+	}
+	defer src.Close()
+
+	tmp := remotePath + ".tmp"
+	dst, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", tmp, err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("copy: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("close %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, remotePath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename %s → %s: %w", tmp, remotePath, err)
+	}
+	return nil
+}
+
+// Sha256IfExists hashes a local file; missing file = empty string.
+// Same signature as SSHTarget.Sha256IfExists so apply can branch on
+// "same hash, skip transfer" uniformly regardless of target type.
+func (t *LocalTarget) Sha256IfExists(_ context.Context, path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("hash %s: %w", path, err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// CommandExists checks the local PATH. Mirrors SSHTarget so apply's
+// preflight code can ask "is sha256sum present" uniformly across
+// target types.
+func (t *LocalTarget) CommandExists(_ context.Context, name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// Compile-time assertion that LocalTarget implements Target. Future
+// additions to the Target interface fail loudly here instead of at
+// the first use site somewhere else in the codebase. Mirrors the
+// equivalent assertion at the bottom of ssh.go.
+var _ Target = (*LocalTarget)(nil)
 
 func (t *LocalTarget) Download(_ context.Context, remotePath, localPath string) error {
 	return copyFile(remotePath, localPath)

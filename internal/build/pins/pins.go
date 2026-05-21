@@ -5,6 +5,16 @@
 // Bump policy: a Makefile target `refresh-builder-pins` re-resolves
 // Eclipse Temurin tags to current digests and rewrites the JSON. The
 // regeneration happens at trond release-prep time, not at runtime.
+//
+// Schema: per-platform digests, not manifest-list digests.
+// Eclipse Temurin's `:8-jdk-jammy` is a multi-arch manifest list;
+// `docker pull` on a tag resolves to the host's arch variant
+// automatically. But trond needs to support cross-arch
+// (`--platform linux/amd64` on an arm64 host), and docker rejects
+// `docker run --platform X image@<manifest-list-digest>` with
+// "cannot overwrite digest" — the manifest list digest doesn't
+// match the per-arch image we'd actually run. So we pin the
+// PER-PLATFORM digest, queryable via `docker manifest inspect`.
 package pins
 
 import (
@@ -16,11 +26,12 @@ import (
 //go:embed builder_image_digests.json
 var embeddedJSON []byte
 
-// PinEntry is one row in the pin file — the ref name plus the
-// content-addressed digest. The cache key (FR-002) consumes Digest.
+// PinEntry is one row in the pin file. Ref is the canonical tag
+// (e.g. `eclipse-temurin:8-jdk-jammy`); Platforms maps docker
+// `--platform` strings to the per-arch image digest at that tag.
 type PinEntry struct {
-	Ref    string `json:"ref"`
-	Digest string `json:"digest"`
+	Ref       string            `json:"ref"`
+	Platforms map[string]string `json:"platforms"`
 }
 
 type pinFile struct {
@@ -40,28 +51,31 @@ var parsed = func() pinFile {
 
 // Resolve returns the canonical image reference (e.g.
 // `eclipse-temurin:8-jdk-jammy@sha256:abc...`) for a given JDK
-// version string ("8", "11", "17", "21"). Returns
-// (ref, digest, true) on hit. Caller threads the digest into the
-// cache key.
+// version + docker platform. Returns (ref, digest, true) on hit;
+// the digest is the per-arch image digest that docker actually
+// stores locally — so `docker run image@digest` works without the
+// "cannot overwrite digest" issue you'd hit with a manifest-list
+// digest.
 //
 // If override is non-empty, it replaces the entire ref. The override
 // path is documented in AGENTS.md as an escape hatch (FR-024) and
 // participates in the cache key so pinned and overridden builds don't
 // collide.
-func Resolve(jdkVersion string, override string) (ref string, digest string, ok bool) {
+func Resolve(jdkVersion, platform, override string) (ref string, digest string, ok bool) {
 	if override != "" {
-		// Override must already include the digest portion. Caller is
-		// responsible for that — pins.go just lets it through. The
-		// "digest" reported back to the cache key is the override
-		// itself, so any bump in the override automatically changes
-		// the cache key.
+		// Override is reported as the cache digest verbatim so any
+		// bump in the override automatically changes the cache key.
 		return override, override, true
 	}
 	entry, hit := parsed.Pins[jdkVersion]
 	if !hit {
 		return "", "", false
 	}
-	return fmt.Sprintf("%s@%s", entry.Ref, entry.Digest), entry.Digest, true
+	d, hit := entry.Platforms[platform]
+	if !hit {
+		return "", "", false
+	}
+	return fmt.Sprintf("%s@%s", entry.Ref, d), d, true
 }
 
 // Versions returns the list of JDK versions for which a pin exists,
@@ -70,6 +84,21 @@ func Versions() []string {
 	out := make([]string, 0, len(parsed.Pins))
 	for v := range parsed.Pins {
 		out = append(out, v)
+	}
+	return out
+}
+
+// Platforms returns the docker platform strings for which a pin
+// exists under the given JDK version, used for diagnostic surfaces
+// when Resolve misses on the platform side.
+func Platforms(jdkVersion string) []string {
+	entry, hit := parsed.Pins[jdkVersion]
+	if !hit {
+		return nil
+	}
+	out := make([]string, 0, len(entry.Platforms))
+	for p := range entry.Platforms {
+		out = append(out, p)
 	}
 	return out
 }

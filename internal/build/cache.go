@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -18,7 +19,13 @@ func CacheDir() string {
 
 // EnsureCacheDirs creates the cache subdirectories. Idempotent.
 func EnsureCacheDirs() error {
-	for _, sub := range []string{"out", "images", "manifest", "locks", "gradle"} {
+	// Note: the gradle cache used to be a `gradle` bind-mounted
+	// subdir here, but macOS Docker Desktop strips the exec bit on
+	// files the container writes (breaks protoc + similar native
+	// helpers). The runner now binds a docker named volume
+	// (`trond-build-gradle-cache`) instead, so this dir list is
+	// only for host-side outputs (artifacts, manifests, locks).
+	for _, sub := range []string{"out", "images", "manifest", "locks"} {
 		p := filepath.Join(CacheDir(), sub)
 		if err := os.MkdirAll(p, 0o700); err != nil {
 			return fmt.Errorf("mkdir %s: %w", p, err)
@@ -37,7 +44,12 @@ func manifestPath(key string) string {
 // but not sufficient — we MUST also stat the artifact (jar or image
 // metadata) that the manifest points at. A user who manually deleted
 // a JAR shouldn't get a stale cache hit.
-func Lookup(key CacheKey) (*CacheHit, error) {
+//
+// ctx threads through the docker-inspect call for image artifacts;
+// callers should pass the same signal-aware context they use for
+// the rest of the build so a stuck docker daemon doesn't wedge the
+// cache check.
+func Lookup(ctx context.Context, key CacheKey) (*CacheHit, error) {
 	mp := manifestPath(key.String())
 	m, err := readManifest(mp)
 	if errors.Is(err, os.ErrNotExist) {
@@ -57,10 +69,23 @@ func Lookup(key CacheKey) (*CacheHit, error) {
 			return nil, fmt.Errorf("stat cached artifact: %w", statErr)
 		}
 	case "image":
-		// Image artifacts are tracked via images/<key>.json. Phase 3
-		// fills this in; for Phase 1 we treat missing as miss.
-		if _, statErr := os.Stat(filepath.Join(CacheDir(), "images", key.String()+".json")); errors.Is(statErr, os.ErrNotExist) {
+		// Image artifacts are tracked via images/<key>.json. We also
+		// have to `docker image inspect` to confirm the local TAG
+		// still resolves — a `docker rmi <tag>` (even one that left
+		// the underlying image ID alive via other tags) makes
+		// compose's `image: <tag>` field unresolvable. Tag-side
+		// check is the authoritative one. (FR-020 cleanup branch.)
+		meta, metaErr := readImageMetadata(key.String())
+		if errors.Is(metaErr, os.ErrNotExist) {
 			_ = os.Remove(mp)
+			return &CacheHit{Hit: false}, nil
+		}
+		if metaErr != nil {
+			return nil, fmt.Errorf("read image metadata: %w", metaErr)
+		}
+		if !imageTagExistsLocally(ctx, meta.Tag) {
+			_ = os.Remove(mp)
+			_ = os.Remove(filepath.Join(CacheDir(), "images", key.String()+".json"))
 			return &CacheHit{Hit: false}, nil
 		}
 	}

@@ -330,6 +330,217 @@ nodes:
 	}
 }
 
+// TestParse_BuildDockerImageNowAccepted is the Phase 3 unlock
+// regression guard. Phase 2 rejected `runtime: docker +
+// artifact: image` because the compose render path didn't know
+// about locally-built images. Phase 3 wires it in: the same intent
+// must now parse + validate cleanly.
+func TestParse_BuildDockerImageNowAccepted(t *testing.T) {
+	data := []byte(`
+name: dev-fullnode
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build:dev
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse should now accept docker+image: %v", err)
+	}
+	if i.Target.Runtime != "docker" {
+		t.Errorf("Target.Runtime = %q; want docker (explicit)", i.Target.Runtime)
+	}
+	if i.Nodes[0].Build.Artifact != "image" {
+		t.Errorf("Build.Artifact = %q; want image", i.Nodes[0].Build.Artifact)
+	}
+}
+
+// TestParse_BuildImageArtifactDefaultsRuntimeToDocker is the
+// inverse of TestParse_BuildDefaultsRuntimeToJar: when the user
+// declares artifact=image without an explicit target.runtime, the
+// runtime MUST default to docker (the artifact's only consumer).
+func TestParse_BuildImageArtifactDefaultsRuntimeToDocker(t *testing.T) {
+	data := []byte(`
+name: dev-fullnode
+network: nile
+target:
+  type: local
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build:dev
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if i.Target.Runtime != "docker" {
+		t.Errorf("Target.Runtime default = %q; want docker (artifact=image)",
+			i.Target.Runtime)
+	}
+}
+
+// TestParse_BuildImageRejectsCrossArchPlatform is the Phase 3
+// review pass 1 regression guard for the most-dangerous Phase 3
+// combo: artifact=image with a platform that differs from the host's
+// arch. The docker.sock-mounted builder can't actually produce a
+// cross-arch image (host daemon wins); silently accepting it would
+// cache an amd64 image under an arm64 cache key (or vice versa)
+// and deploy the wrong arch to the target server.
+func TestParse_BuildImageRejectsCrossArchPlatform(t *testing.T) {
+	host := DefaultPlatform()
+	var crossArch string
+	if host == "linux/arm64" {
+		crossArch = "linux/amd64"
+	} else {
+		crossArch = "linux/arm64"
+	}
+	data := []byte(`
+name: bad-cross
+network: nile
+target:
+  type: local
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build:dev
+      platform: ` + crossArch + `
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatalf("expected rejection of artifact=image + platform=%q on host=%q",
+			crossArch, host)
+	}
+	if !strings.Contains(err.Error(), "unsafe") {
+		t.Errorf("error %q should explain the cross-arch hazard", err)
+	}
+}
+
+// TestParse_BuildImageAcceptsHostArchPlatform: same combo but
+// platform equals the host arch — the safe case — must still parse.
+func TestParse_BuildImageAcceptsHostArchPlatform(t *testing.T) {
+	host := DefaultPlatform()
+	data := []byte(`
+name: ok-same-arch
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build:dev
+      platform: ` + host + `
+`)
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("host-arch image build should parse: %v", err)
+	}
+}
+
+// TestParse_BuildImageStrategyJarWrap_AllowsCrossArch is the Phase
+// 5d unlock guard. When users opt into `image_strategy: jar-wrap`,
+// the runtime/artifact validator MUST NOT reject cross-arch builds
+// (the docker.sock-mounted gradle path is the unsafe one; jar-wrap
+// runs docker build directly from host where --platform works).
+func TestParse_BuildImageStrategyJarWrap_AllowsCrossArch(t *testing.T) {
+	host := DefaultPlatform()
+	var crossArch string
+	if host == "linux/arm64" {
+		crossArch = "linux/amd64"
+	} else {
+		crossArch = "linux/arm64"
+	}
+	data := []byte(`
+name: ok-cross-arch
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build/dev:foo
+      image_strategy: jar-wrap
+      platform: ` + crossArch + `
+`)
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("jar-wrap should permit cross-arch (unlike gradle strategy): %v", err)
+	}
+}
+
+// TestParse_BuildImageStrategyGradle_RejectsCrossArch is the
+// regression guard for the OTHER half — gradle strategy must keep
+// rejecting cross-arch (the docker.sock hazard is real for that
+// path).
+func TestParse_BuildImageStrategyGradle_RejectsCrossArch(t *testing.T) {
+	host := DefaultPlatform()
+	var crossArch string
+	if host == "linux/arm64" {
+		crossArch = "linux/amd64"
+	} else {
+		crossArch = "linux/arm64"
+	}
+	data := []byte(`
+name: bad-cross-arch
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build/dev:foo
+      image_strategy: gradle
+      platform: ` + crossArch + `
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("gradle strategy must still reject cross-arch")
+	}
+}
+
+// TestParse_BuildImageStrategyDefaultsToGradle: omitting the field
+// must keep the Phase 3 default (gradle), so existing tron-docker-
+// shaped intents continue working unchanged.
+func TestParse_BuildImageStrategyDefaultsToGradle(t *testing.T) {
+	data := []byte(`
+name: default-strategy
+network: nile
+target:
+  type: local
+  runtime: docker
+nodes:
+  - type: fullnode
+    build:
+      source: /tmp/java-tron
+      artifact: image
+      image_tag: trond-build/dev:foo
+`)
+	i, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := i.Nodes[0].Build.ImageStrategy; got != "gradle" {
+		t.Errorf("image_strategy default = %q; want gradle", got)
+	}
+}
+
 // TestParse_BuildInvalidJDK pins the validator-tag enum.
 func TestParse_BuildInvalidJDK(t *testing.T) {
 	data := []byte(`

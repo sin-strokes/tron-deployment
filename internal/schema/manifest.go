@@ -67,6 +67,9 @@ func Build(root *cobra.Command, schemaLookup map[string]string) Manifest {
 var DefaultSchemaLookup = map[string]string{
 	"trond apply":             "apply",
 	"trond build":             "build",
+	"trond build list":        "build-list",
+	"trond build inspect":     "build-inspect",
+	"trond build prune":       "build-prune",
 	"trond plan":              "plan",
 	"trond status":            "status",
 	"trond list":              "list",

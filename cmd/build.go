@@ -32,6 +32,7 @@ var (
 	buildImageTag      string
 	buildImageOverride string
 	buildPlatform      string
+	buildImageStrategy string
 )
 
 var buildCmd = &cobra.Command{
@@ -69,8 +70,10 @@ func init() {
 		"Git revision to build (HEAD, branch, tag, or sha)")
 	buildCmd.Flags().StringVar(&buildArtifactKind, "artifact", "jar",
 		"Artifact kind: 'jar' or 'image'")
-	buildCmd.Flags().StringVar(&buildJDKVersion, "jdk", "8",
-		"JDK version for the builder container (8|11|17|21)")
+	buildCmd.Flags().StringVar(&buildJDKVersion, "jdk", "",
+		"JDK version for the builder container (8|11|17|21). "+
+			"Empty defaults from platform: linux/amd64→8, linux/arm64→17 "+
+			"(java-tron's published compat matrix).")
 	buildCmd.Flags().StringVar(&buildGradleTask, "gradle-task", "",
 		"Gradle task name (defaults: 'shadowJar' for jar, 'dockerBuild' for image)")
 	buildCmd.Flags().StringArrayVar(&buildGradleArgs, "gradle-arg", nil,
@@ -85,6 +88,11 @@ func init() {
 	buildCmd.Flags().StringVar(&buildPlatform, "platform", "",
 		"Docker --platform for the builder container (linux/amd64 or linux/arm64). "+
 			"Empty = host arch. Cross-arch builds use QEMU emulation.")
+	buildCmd.Flags().StringVar(&buildImageStrategy, "image-strategy", "",
+		"For --artifact image: 'gradle' (default — invoke source's gradle dockerBuild "+
+			"task; requires the source to ship one) or 'jar-wrap' (produce JAR via "+
+			"the artifact=jar path, then COPY into a trond-embedded Dockerfile — "+
+			"works for stock java-tron).")
 	rootCmd.AddCommand(buildCmd)
 }
 
@@ -112,6 +120,7 @@ func runBuild(cmd *cobra.Command, _ []string) error {
 		ImageTag:             buildImageTag,
 		BuilderImageOverride: buildImageOverride,
 		Platform:             buildPlatform,
+		ImageStrategy:        buildImageStrategy,
 	}
 
 	// SIGINT-aware context. Build container + git subprocesses all

@@ -223,6 +223,23 @@ type BuildSpec struct {
 	// functional. Two builds with different platforms coexist in the
 	// cache (Platform participates in the cache key).
 	Platform string `yaml:"platform,omitempty" json:"platform,omitempty" validate:"omitempty,oneof=linux/amd64 linux/arm64"`
+
+	// ImageStrategy picks how `artifact: image` produces the image.
+	// Only meaningful when artifact = image; ignored for jar.
+	//
+	//   "gradle" (default): invoke the source tree's gradle docker
+	//     plugin task (e.g. `dockerBuild`). Requires the source to
+	//     have such a task — works for tron-docker-style repos that
+	//     ship gradle docker config, NOT for stock java-tron which
+	//     only emits JARs.
+	//
+	//   "jar-wrap": Phase 5d. First produce the JAR (recurses through
+	//     the artifact=jar path with full cache reuse), then run
+	//     `docker build` against a trond-embedded minimal Dockerfile
+	//     that COPYs the JAR into a pinned eclipse-temurin runtime
+	//     base. Works for stock java-tron — the source tree only
+	//     needs a JAR task (e.g. `:framework:buildFullNodeJar`).
+	ImageStrategy string `yaml:"image_strategy,omitempty" json:"image_strategy,omitempty" validate:"omitempty,oneof=gradle jar-wrap"`
 }
 
 // JarSource tells trond where (and how) to fetch the java-tron jar for a
