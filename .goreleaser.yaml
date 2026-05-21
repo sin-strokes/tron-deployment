@@ -24,8 +24,24 @@ builds:
       - -X github.com/tronprotocol/tron-deployment/cmd.commit={{.Commit}}
       - -X github.com/tronprotocol/tron-deployment/cmd.buildTime={{.Date}}
 
+  - id: replay
+    main: ./tools/replay
+    binary: replay
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
 archives:
   - id: default
+    builds:
+      - trond
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -34,6 +50,17 @@ archives:
       - LICENSE*
       - examples/*
       - schemas/*
+
+  - id: replay
+    builds:
+      - replay
+    formats:
+      - tar.gz
+    name_template: "replay_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE*
+      - src: tools/replay/README.md
+        dst: README.md
 
 checksum:
   name_template: "checksums.txt"
@@ -123,6 +150,12 @@ nfpms:
 # path is still the cleaner UX for CLI tools.
 brews:
   - name: trond
+    # Scope to the trond archive only — the homebrew tap installs the
+    # main CLI, not the sibling replay tool. Without ids, goreleaser
+    # tries to package both archives under the same OS/Arch slot and
+    # errors with "one tap can handle only one archive".
+    ids:
+      - default
     repository:
       owner: tronprotocol
       name: homebrew-tap
