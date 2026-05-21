@@ -35,6 +35,7 @@ func newConnectedPair(t *testing.T) (*mcp.ClientSession, func()) {
 	registerLifecycleTools(server)
 	registerDriftTools(server)
 	registerHealTools(server)
+	registerBuildTools(server)
 	registerResources(server)
 	registerPrompts(server)
 
@@ -88,6 +89,7 @@ func TestListTools_AllRegistered(t *testing.T) {
 		"config_validate", "config_render", "plan", "apply",
 		"snapshot_sources", "snapshot_list", "snapshot_jobs", "snapshot_download",
 		"knowledge_list", "knowledge_get",
+		"build_list", "build_inspect", "build_prune",
 	}
 	got := map[string]bool{}
 	for _, tool := range res.Tools {
