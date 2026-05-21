@@ -1,9 +1,100 @@
 package build
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestJarReqForWrap pins the recursive-Run contract: image_strategy=
+// jar-wrap calls Run() with a derived JAR-shaped Request, and that
+// inner Request MUST be the same shape an explicit `--artifact jar`
+// invocation produces — otherwise the two paths populate distinct
+// cache entries and the wrap path forces a JAR rebuild every time.
+//
+// Also covers the lock-ordering invariant (outer image-key flock →
+// inner jar-key flock): if the inner Request accidentally kept
+// ImageStrategy/ArtifactKind=image set, Run would recurse back
+// into buildImageJarWrap → double-acquire the image-key lock →
+// deadlock. The clears below prevent that.
+func TestJarReqForWrap(t *testing.T) {
+	t.Run("clears image-only fields", func(t *testing.T) {
+		outer := Request{
+			SourcePath:    "/some/src",
+			RevisionSpec:  "HEAD",
+			ArtifactKind:  "image",
+			ImageTag:      "trond-build/java-tron:dev",
+			ImageStrategy: "jar-wrap",
+			JDKVersion:    "17",
+			Platform:      "linux/arm64",
+			GradleTask:    "dockerBuild", // the artifact=image default
+		}
+		got := jarReqForWrap(outer)
+
+		if got.ArtifactKind != "jar" {
+			t.Errorf("ArtifactKind = %q; want jar", got.ArtifactKind)
+		}
+		if got.ImageTag != "" {
+			t.Errorf("ImageTag = %q; want empty (no image step on inner JAR build)", got.ImageTag)
+		}
+		if got.ImageStrategy != "" {
+			t.Errorf("ImageStrategy = %q; want empty (inner Run must NOT recurse into jar-wrap → deadlock)", got.ImageStrategy)
+		}
+		if got.GradleTask != "shadowJar" {
+			t.Errorf("GradleTask = %q; want shadowJar (dockerBuild default swapped to JAR default)", got.GradleTask)
+		}
+		// Source/revision/platform/JDK MUST pass through unchanged so
+		// the inner JAR cache key matches what an explicit
+		// `--artifact jar` invocation produces.
+		if got.SourcePath != outer.SourcePath ||
+			got.RevisionSpec != outer.RevisionSpec ||
+			got.JDKVersion != outer.JDKVersion ||
+			got.Platform != outer.Platform {
+			t.Errorf("source/revision/jdk/platform must pass through unchanged; got %+v", got)
+		}
+	})
+
+	t.Run("preserves explicit GradleTask override", func(t *testing.T) {
+		outer := Request{
+			ArtifactKind:  "image",
+			ImageStrategy: "jar-wrap",
+			GradleTask:    ":framework:buildFullNodeJar", // user override
+		}
+		got := jarReqForWrap(outer)
+		if got.GradleTask != ":framework:buildFullNodeJar" {
+			t.Errorf("explicit GradleTask was clobbered: %q", got.GradleTask)
+		}
+	})
+
+	t.Run("equivalent to explicit jar request", func(t *testing.T) {
+		// The crux of the cache-reuse invariant: building source S
+		// twice — once with --artifact jar, once with --artifact
+		// image --image-strategy jar-wrap — must produce identical
+		// JAR Requests (modulo trivially-equal fields). Else the JAR
+		// cache holds two entries for the same logical artifact.
+		explicit := Request{
+			SourcePath:   "/some/src",
+			RevisionSpec: "HEAD",
+			ArtifactKind: "jar",
+			JDKVersion:   "17",
+			Platform:     "linux/arm64",
+			GradleTask:   "shadowJar",
+		}
+		derived := jarReqForWrap(Request{
+			SourcePath:    "/some/src",
+			RevisionSpec:  "HEAD",
+			ArtifactKind:  "image",
+			ImageStrategy: "jar-wrap",
+			ImageTag:      "any:tag",
+			JDKVersion:    "17",
+			Platform:      "linux/arm64",
+			GradleTask:    "dockerBuild",
+		})
+		if !reflect.DeepEqual(explicit, derived) {
+			t.Errorf("explicit and derived JAR Requests must match for cache reuse:\n  explicit: %+v\n  derived:  %+v", explicit, derived)
+		}
+	})
+}
 
 // TestArchTripletForPlatform pins the platform → Debian multi-arch
 // triplet mapping. The Dockerfile's LD_PRELOAD path embeds the

@@ -32,8 +32,23 @@ func transferBuiltJAR(
 	// Fast path: same sha256 → no transfer needed. Saves the
 	// round-trip and the bandwidth on intent re-applies that didn't
 	// change the source.
+	//
+	// On a transport-level Sha256IfExists error (SSH session can't
+	// open, connection dropped) we bail immediately rather than waste
+	// a multi-hundred-MB PutFile attempt on the same broken link —
+	// PutFile would just hit the same failure with a longer trace.
+	// Exit-code failures (file missing, sha256sum absent) come back
+	// as ("", nil) and correctly fall through to PutFile.
 	if summary != nil && summary.SHA256 != "" {
-		if remoteSHA, err := tgt.Sha256IfExists(ctx, remotePath); err == nil && remoteSHA == summary.SHA256 {
+		remoteSHA, err := tgt.Sha256IfExists(ctx, remotePath)
+		if err != nil {
+			return output.NewErrorf("DEPLOY_ERROR", output.ExitGeneralError,
+				"check remote sha256 for %s: %s", remotePath, err.Error()).
+				WithSuggestions(
+					"Verify the remote target is reachable: trond preflight --intent <intent>",
+				)
+		}
+		if remoteSHA == summary.SHA256 {
 			return nil
 		}
 	}

@@ -29,25 +29,18 @@ var jarWrapDockerfileTemplate string
 // with artifact=jar against the same source, the cached JAR is
 // reused with no work; the wrapped image stays separate.
 func buildImageJarWrap(ctx context.Context, r *resolved, started time.Time) (*Manifest, error) {
-	// Step 1: get the JAR. Recurse through Run with ArtifactKind=jar.
-	// We forge a Request from the current one with a few fields
-	// adjusted: artifact becomes jar; the JAR's gradle_task is
-	// whatever the user gave (probably :framework:buildFullNodeJar
-	// for java-tron) — Phase 1's GradleTask flow respects it.
-	// ImageTag / ImageStrategy don't apply to the JAR build.
-	jarReq := r.req
-	jarReq.ArtifactKind = "jar"
-	jarReq.ImageTag = ""
-	jarReq.ImageStrategy = ""
-	// If GradleTask is the artifact=image default ("dockerBuild")
-	// because the user didn't explicitly set it, swap to the
-	// artifact=jar default ("shadowJar"). Otherwise honor whatever
-	// the user picked — it's their JAR task.
-	if jarReq.GradleTask == "dockerBuild" {
-		jarReq.GradleTask = "shadowJar"
-	}
-
-	jarResult, err := Run(ctx, jarReq)
+	// Step 1: get the JAR. Recurse through Run with a JAR-shaped
+	// Request so the inner call hits the JAR cache (extraFold drops
+	// the image-only fields). See jarReqForWrap for the field-level
+	// invariants this depends on.
+	//
+	// Lock ordering invariant: the outer Run is currently holding the
+	// IMAGE cache-key flock. The recursive call below acquires the
+	// JAR cache-key flock. Two trond processes building the same
+	// source with image_strategy=jar-wrap therefore both acquire
+	// IMAGE-lock first, then JAR-lock — no flip, no deadlock. Any
+	// future refactor MUST preserve this order.
+	jarResult, err := Run(ctx, jarReqForWrap(r.req))
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +197,30 @@ func buildImageFromJAR(ctx context.Context, r *resolved, jarPath, jarSHA256 stri
 			"persist manifest: %s", err.Error())
 	}
 	return manifest, nil
+}
+
+// jarReqForWrap derives the inner JAR Request from an outer
+// image-strategy=jar-wrap Request. Centralised here so both
+// buildImageJarWrap and unit tests share the exact mutation rules:
+//
+//   - ArtifactKind flips to "jar" so the inner Run cache-keys as a JAR
+//     (extraFold drops ImageStrategy/ImageTag for jar artifacts).
+//   - ImageTag / ImageStrategy are cleared so the inner Run never
+//     recurses back into jar-wrap, and so the JAR cache key matches
+//     what an explicit `artifact=jar` build produces (true cache reuse
+//     across both invocation styles).
+//   - GradleTask: if the outer request inherited the artifact=image
+//     default of "dockerBuild", swap to the JAR default "shadowJar".
+//     Any explicit user override is preserved.
+func jarReqForWrap(outer Request) Request {
+	jarReq := outer
+	jarReq.ArtifactKind = "jar"
+	jarReq.ImageTag = ""
+	jarReq.ImageStrategy = ""
+	if jarReq.GradleTask == "dockerBuild" {
+		jarReq.GradleTask = "shadowJar"
+	}
+	return jarReq
 }
 
 // dockerInspectImageID looks up the image ID by tag. Unlike the Phase

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -301,8 +302,14 @@ func (t *SSHTarget) PutFile(ctx context.Context, localPath, remotePath string) e
 // and we surface a one-line stderr warning so an operator at least
 // knows there's stale state to investigate. Without the warning the
 // .tmp file could persist across many failed deploys silently.
+//
+// Uses a bounded context derived from Background (not the parent ctx,
+// which is typically already cancelled when cleanup runs after SIGINT)
+// so the cleanup itself can't hang indefinitely on a wedged socket.
 func (t *SSHTarget) cleanupTmp(tmpPath string) {
-	if _, err := t.Exec(context.Background(), "rm", "-f", tmpPath); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := t.Exec(ctx, "rm", "-f", tmpPath); err != nil {
 		fmt.Fprintf(os.Stderr,
 			"warning: failed to clean up partial transfer %s on %s: %v\n",
 			tmpPath, t.String(), err)
@@ -310,15 +317,21 @@ func (t *SSHTarget) cleanupTmp(tmpPath string) {
 }
 
 // Sha256IfExists returns the hex sha256 of a remote file, or empty
-// string when the file doesn't exist OR the remote can't hash it
-// (e.g. missing sha256sum). The caller treats empty as "transfer
-// needed", which is correct in both cases.
+// string when the remote ran sha256sum and it exited non-zero (file
+// missing, sha256sum binary absent, perms blocking the read — all
+// reported by the remote shell as an exit code). The caller treats
+// empty + nil err as "transfer needed", which is correct in those
+// cases: PutFile will either succeed or surface a more specific error.
+//
+// Transport-level failures (SSH session can't open, connection
+// dropped mid-command) DO bubble up as a non-nil err. The caller
+// would otherwise waste bandwidth on a doomed PutFile attempt that
+// hits the same broken link; surfacing the error lets it bail
+// quickly with the actual root cause.
 //
 // We deliberately skip a `test -f` preflight: a single sha256sum
-// call subsumes both "exists" and "compute hash" — when the file
-// is missing, sha256sum exits non-zero and we return empty, which
-// gives apply the same result it would have gotten from a 'no such
-// file' preflight. One round-trip, one allowlisted command.
+// call subsumes both "exists" and "compute hash". One round-trip,
+// one allowlisted command.
 func (t *SSHTarget) Sha256IfExists(ctx context.Context, remotePath string) (string, error) {
 	if t.client == nil {
 		return "", fmt.Errorf("ssh not connected")
@@ -332,10 +345,17 @@ func (t *SSHTarget) Sha256IfExists(ctx context.Context, remotePath string) (stri
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", ctx.Err()
 		}
-		// Missing file or sha256sum unavailable. Either way the
-		// caller should proceed with the transfer; not an error
-		// from our perspective.
-		return "", nil
+		// The remote shell ran the command and it exited non-zero
+		// (file missing, sha256sum absent, permission denied, etc.).
+		// Treat as "no usable hash" — caller falls through to PutFile.
+		var exitErr *ssh.ExitError
+		if errors.As(err, &exitErr) {
+			return "", nil
+		}
+		// Anything else (NewSession failed, EOF on the SSH channel,
+		// dial error) is a transport-level problem. Bubbling lets
+		// the caller avoid wasting a large transfer on a broken link.
+		return "", err
 	}
 	// `sha256sum <path>` output: `<hex>  <path>\n`.
 	parts := strings.Fields(string(out))

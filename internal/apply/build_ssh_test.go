@@ -136,6 +136,29 @@ func TestTransferBuiltJAR_WrapsPutFileErrorsAsDeployError(t *testing.T) {
 	}
 }
 
+// TestTransferBuiltJAR_BailsOnSha256TransportError pins the H2
+// review-pass-3 fix: when Sha256IfExists returns a transport-level
+// error (SSH session can't open, link dropped), transferBuiltJAR
+// MUST NOT fall through and waste a multi-hundred-MB PutFile
+// attempt on the same broken link. It should surface the error
+// directly so the operator sees the real failure quickly.
+func TestTransferBuiltJAR_BailsOnSha256TransportError(t *testing.T) {
+	tgt := newRecordingSSHTarget("")
+	tgt.stubSHAErr = errors.New("ssh: handshake failed: EOF")
+	summary := &BuildSummary{SHA256: "abc123"}
+
+	err := transferBuiltJAR(context.Background(), tgt, summary, "/tmp/x.jar", "/remote/x.jar")
+	if err == nil {
+		t.Fatal("expected transport error to surface, got nil")
+	}
+	if !contains(err.Error(), "check remote sha256") {
+		t.Errorf("error %q should mention the sha256 step (not generic PutFile)", err)
+	}
+	if tgt.putCalls != 0 {
+		t.Errorf("PutFile called %d times; want 0 (transport error → bail before transfer)", tgt.putCalls)
+	}
+}
+
 func contains(s, substr string) bool {
 	for i := 0; i+len(substr) <= len(s); i++ {
 		if s[i:i+len(substr)] == substr {
