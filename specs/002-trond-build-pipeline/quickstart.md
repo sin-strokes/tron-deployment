@@ -38,9 +38,17 @@ trond ships two builder backends. Pick whichever fits your machine.
 | Toolchain | Pinned `eclipse-temurin:<jdk>-jdk-jammy` image | Your local `java` + the source's `./gradlew` |
 | Reproducibility | High — same digest across machines | Only as reproducible as your host JDK |
 | Requirements | Docker daemon reachable | `java` on PATH; `./gradlew` in the source tree |
+| `artifact: jar` | ✓ | ✓ |
+| `artifact: image` (either strategy) | ✓ | ✓ (image step still uses host docker) |
 | Cross-arch builds | `--platform linux/amd64 \| linux/arm64` via QEMU | Host arch only |
 | Cache key includes | Pinned builder image digest | sha256 of `java -version` output |
-| First-build time (java-tron) | ~5 min cold, ~50 ms cache hit | ~3 min cold, ~50 ms cache hit |
+| First-build time (java-tron) | ~5–10 min cold (longer under QEMU), ~50 ms cache hit | ~3–8 min cold, ~50 ms cache hit |
+
+Both builders need a reachable docker daemon for image artifacts —
+the `jar-wrap` strategy runs `docker build` host-side, and the
+`gradle` strategy invokes gradle's docker plugin which talks to the
+local daemon either directly (host) or via a `docker.sock` mount
+(docker builder).
 
 You can switch builders freely — they produce distinct cache entries
 (the BuilderImageDigest differs), so a stray host build won't
@@ -59,7 +67,7 @@ target:
   runtime: jar
 nodes:
   - type: fullnode
-    install_path: /var/lib/trond/my-dev-fullnode
+    install_path: /tmp/trond-dev/my-dev-fullnode
     resources:
       memory: 4G
     build:
@@ -122,6 +130,10 @@ The output's `build` field surfaces the cache state:
   "endpoints": {"http": "http://127.0.0.1:8090", "grpc": "127.0.0.1:50051"}
 }
 ```
+
+`artifact_path` lives under `$TROND_STATE_DIR/builds/out/` (or
+`~/.trond/builds/out/` if you haven't overridden `--state-dir` /
+`$TROND_STATE_DIR`).
 
 `dirty: true` means your working tree had uncommitted edits; trond
 folded a patch hash into the cache key so unrelated edits don't
@@ -191,6 +203,7 @@ build:
   image_strategy: jar-wrap
   image_tag: my-fork/java-tron:dev
   gradle_task: ":framework:buildFullNodeJar"   # produces the JAR
+  platform: linux/amd64                        # optional; omit = host arch
 ```
 
 trond builds the fat JAR via the standard Phase 1 path, then runs
@@ -199,10 +212,11 @@ into a pinned `eclipse-temurin:<jdk>-jdk-jammy` runtime with
 `tcmalloc_minimal` preloaded (matches upstream `tron-docker`'s
 patterns).
 
-The wrapped image is cross-arch safe — `--platform linux/amd64` on
-an arm64 host produces a working amd64 image without docker.sock
-trickery (the inner JAR is JVM bytecode, the outer step is COPY-
-only).
+The wrapped image is cross-arch safe — setting `build.platform`
+(e.g. `linux/amd64` on an arm64 host) produces a working image for
+the target arch without docker.sock trickery (the inner JAR is JVM
+bytecode, the outer step is COPY-only). Omit `platform:` to get
+host arch.
 
 ## Cache management
 
@@ -306,6 +320,6 @@ host); `trond build prune --orphan --confirm` cleans them up.
 
 - `trond build --help` — full flag reference
 - `trond schema build -o json` — machine-readable contract
-- [spec/plan.md](./plan.md) — design rationale + non-functional
-  requirements (FR-001 through FR-024)
+- [spec.md](./spec.md) — functional requirements (FR-001 through FR-024)
+- [plan.md](./plan.md) — design rationale + phase-by-phase implementation plan
 - [AGENTS.md](../../AGENTS.md) — agent-facing workflows

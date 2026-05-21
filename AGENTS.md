@@ -479,11 +479,11 @@ topic; don't paraphrase from training data.
    Use the upcoming `snapshot prune` (or just `rm` the JSON+log pair
    when the job is `state=stopped`).
 
-9. **Don't `rm -rf ~/.trond/builds`** to clean the build cache. Use
-   `trond build prune` so the manifests, image side-files, and
-   docker-stored images all get reclaimed consistently. Manual `rm`
-   leaves dangling docker layers and orphaned manifests that confuse
-   the next `trond build list`.
+9. **Don't `rm -rf` the build cache directory** (`$TROND_STATE_DIR/builds`,
+   defaulting to `~/.trond/builds`) to clean it. Use `trond build prune`
+   so the manifests, image side-files, and docker-stored images all get
+   reclaimed consistently. Manual `rm` leaves dangling docker layers
+   and orphaned manifests that confuse the next `trond build list`.
 
 10. **Don't pass `--keep-last N --confirm` alone to prune**. The CLI
     rejects it for safety: that combo deletes everything except the N

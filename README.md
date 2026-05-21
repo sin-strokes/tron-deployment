@@ -243,7 +243,7 @@ hit.
 target: { type: local, runtime: jar }
 nodes:
   - type: fullnode
-    install_path: /var/lib/trond/dev
+    install_path: /tmp/trond-dev/my-dev-node
     build:
       source: ../java-tron              # your local checkout
       gradle_task: ":framework:buildFullNodeJar"
@@ -251,7 +251,8 @@ nodes:
 
 ```bash
 trond apply --intent my-dev-node.yaml -o json
-# First run: ~5 min compile. Re-runs against the same source: ~50 ms.
+# First run: ~5-10 min compile (longer under cross-arch QEMU).
+# Re-runs against the same source: ~50 ms cache hit.
 trond build list                          # what's in the cache
 trond build prune --older-than 168h --confirm   # GC 7-day-old entries
 ```
