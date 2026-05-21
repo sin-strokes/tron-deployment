@@ -32,21 +32,12 @@ The codebase is split by module: `main.go` / `state.go` / `trongrid.go` / `priva
 
 Mainnet transactions carry `ref_block_hash` / `expiration` / `timestamp` fields baked against mainnet time and block numbers. None of these are valid on a private chain. To let `broadcast` succeed, your private chain node must skip 4 checks. 
 
-### Patch 1 — `TransactionCapsule.checkExpiration` (clear method body)
+### Patch 1 — `TransactionCapsule.checkExpiration`
 
 File: `chainbase/src/main/java/org/tron/core/capsule/TransactionCapsule.java`
 
 ```java
-// before
-public void checkExpiration(long nextSlotTime) throws TransactionExpirationException {
-  if (getExpiration() < nextSlotTime) {
-    throw new TransactionExpirationException(String.format(
-        "Transaction expiration time is %d, but next slot time is %d",
-        getExpiration(), nextSlotTime));
-  }
-}
-
-// after
+// clear method body to skip expiration check
 public void checkExpiration(long nextSlotTime) throws TransactionExpirationException {
   // Replay mode: skip expiration check.
   // Mainnet tx expiration is signed against mainnet time; private chain
@@ -55,30 +46,17 @@ public void checkExpiration(long nextSlotTime) throws TransactionExpirationExcep
 }
 ```
 
-### Patch 2 — `Manager.java` expiration-window check (comment out)
+### Patch 2 — `Manager.java` expiration-window check
 
 File: `framework/src/main/java/org/tron/core/db/Manager.java`
 
-There are two expiration checks in this file; both must be disabled.
-
-**Check A — TaPos / refBlockHash validator:**
-
-```java
-// validateTapos()
-//   skipped — mainnet tx ref_block_bytes + ref_block_hash point at a
-//   mainnet block whose hash doesn't exist on the private chain
-```
-
-**Check B — inside `validateCommon()`** — comment out the entire conditional:
+There are two expiration checks in function `processTransaction`; both must be disabled.
+**TaPos / refBlockHash validator**
+**Expiration vs head block time validator**
 
 ```java
-// if (transactionExpiration <= headBlockTime
-//     || transactionExpiration > headBlockTime + Constant.MAXIMUM_TIME_UNTIL_EXPIRATION) {
-//   throw new TransactionExpirationException(
-//       String.format(
-//       "Transaction expiration, transaction expiration time is %d, but headBlockTime is %d",
-//           transactionExpiration, headBlockTime));
-// }
+// validateTapos(trxCap);
+// validateCommon(trxCap);
 ```
 
 ### Patch 3 — `TransactionsMsgHandler` network-layer expiration check
@@ -88,8 +66,8 @@ File: `framework/src/main/java/org/tron/core/net/messagehandler/TransactionsMsgH
 Comment out the `checkExpiration` call and its catch arm below:
 
 ```java
-//   trx.getTransactionCapsule().checkExpiration(chainBaseManager.getNextBlockSlotTime());
-...
+//  trx.getTransactionCapsule().checkExpiration(chainBaseManager.getNextBlockSlotTime());
+// ...
 // catch (TransactionExpirationException e) {
 //   logger.warn("Transaction expiration, transaction id: {}, error: {}",
 //       trx.getTransactionCapsule().getTransactionId(), e.getMessage());
