@@ -230,6 +230,40 @@ trond apply --intent examples/mainnet-fullnode-snapshot.yaml \
 
 Full annotated example with the storage layout: [`examples/mainnet-fullnode-snapshot.yaml`](examples/mainnet-fullnode-snapshot.yaml). Long-form rationale: `trond knowledge snapshots`.
 
+## Dev loop — build from source
+
+When you need a custom build (a fork, an unreleased patch, a wired-in
+debugger), put a `build:` block under the node and `trond apply`
+handles compile-then-deploy in one shot. Builds are content-addressed
+and cached, so re-applying an unchanged source is a sub-second cache
+hit.
+
+```yaml
+# my-dev-node.yaml
+target: { type: local, runtime: jar }
+nodes:
+  - type: fullnode
+    install_path: /var/lib/trond/dev
+    build:
+      source: ../java-tron              # your local checkout
+      gradle_task: ":framework:buildFullNodeJar"
+```
+
+```bash
+trond apply --intent my-dev-node.yaml -o json
+# First run: ~5 min compile. Re-runs against the same source: ~50 ms.
+trond build list                          # what's in the cache
+trond build prune --older-than 168h --confirm   # GC 7-day-old entries
+```
+
+Choose `--builder host` (uses your local `./gradlew`) for fastest
+iteration, or the default `--builder docker` (pinned eclipse-temurin
+image) for reproducible cross-machine builds. SSH targets build
+locally and stream the JAR over with an SHA256-skip fast-path.
+
+Full walkthrough including image artifacts, cross-arch builds,
+cache management, and MCP usage: [build pipeline quickstart](specs/002-trond-build-pipeline/quickstart.md).
+
 ## Commands
 
 ### Lifecycle
@@ -250,6 +284,15 @@ Full annotated example with the storage layout: [`examples/mainnet-fullnode-snap
 | `trond verify <node>` | Post-deploy health gate |
 | `trond preflight` | Check target readiness |
 | `trond bootstrap` | Install Docker or JDK on target |
+
+### Build (compile java-tron from source)
+
+| Command | Description |
+|---|---|
+| `trond build` | Build a JAR or docker image from a java-tron source tree (content-addressed cache) |
+| `trond build list` | List cached build artifacts |
+| `trond build inspect <key>` | Show full manifest for one cache entry (full key or unambiguous prefix) |
+| `trond build prune` | Remove cached entries per policy (`--older-than`, `--keep-last`, `--orphan`, `--all`); dry-run unless `--confirm` |
 
 ### Configuration
 

@@ -301,6 +301,84 @@ trond network destroy pn --confirm pn -o json
 
 ---
 
+## Workflow 5 — Build java-tron from source
+
+Use when the user wants a custom build: a fork, an unreleased patch,
+a wired-in profiler. The build pipeline is content-addressed by
+git revision + builder image digest + gradle task + args, so
+repeated `apply` calls against an unchanged source are sub-second
+cache hits, not full recompiles.
+
+Trigger: the intent file carries a `build:` block under the node.
+`trond apply` invokes the build automatically; you rarely need to
+call `trond build` directly except for cache mgmt or pre-warming.
+
+```bash
+# 1. Validate the intent like any other.
+trond config validate my-dev.yaml -o json
+
+# 2. Preflight gains LOCAL-side `build-*` checks when build: is set:
+#    build-git, build-source-<dir>, build-docker-local (if builder=docker),
+#    build-host-jdk + build-host-gradlew-<dir> (if builder=host).
+#    Target-side checks (jdk, disk, ports) still run too.
+trond preflight --intent my-dev.yaml -o json
+
+# 3. Apply — the build kicks off automatically before the deploy step.
+#    Cold first build: 3-5 min for java-tron. Cached: ~50ms.
+trond apply --intent my-dev.yaml -o json
+# Output now carries a `build` field alongside the usual envelope:
+# {"name":"...", "result":"created",
+#  "build": {"cache_key":"abc12345-bd…+dirty-7f2a…",
+#            "source_revision":"8f4e2a3c…",
+#            "dirty": true,
+#            "artifact_path":"/home/.../FullNode.jar",
+#            "sha256":"160185…", "cache_hit": false,
+#            "duration_ms": 215000},
+#  ...}
+
+# 4. Survey what's in the cache.
+trond build list -o json
+# Output: {"count": N, "entries": [{cache_key, artifact_kind, size_bytes,
+#                                   orphaned, source_revision, ...}, ...]}
+
+# 5. Inspect a specific entry — full key OR unambiguous prefix.
+trond build inspect 8f4e2a3c -o json
+# Returns the single entry (same shape as build_list entries).
+# Errors: NOT_FOUND (no match), AMBIGUOUS_PREFIX (multi-match;
+# message lists candidates).
+
+# 6. Prune. Filters AND together; dry-run is the default — only
+#    --confirm performs deletions.
+trond build prune --older-than 168h -o json                  # dry-run
+trond build prune --older-than 168h --keep-last 3 --confirm  # delete
+trond build prune --orphan --confirm                         # GC
+```
+
+### Key invariants for agents
+
+- The build runs on the LOCAL machine even when `target.type: ssh` —
+  trond `scp`s the JAR over with an SHA256-skip fast-path. No source
+  bytes ever leave the host.
+- `build.builder: host` works without docker but pins the cache key
+  to `sha256(java -version)`, so a JDK upgrade orphans prior entries
+  (orphans are surfaced in `list --include-orphans` and cleaned by
+  `prune --orphan`).
+- The CLI rejects `--keep-last N --confirm` without an explicit
+  scoping filter (`--all`, `--orphan`, or `--older-than > 0s`).
+  This is a footgun guard: `--keep-last 1 --confirm` would wipe
+  every entry except the newest, which is rarely what the user
+  meant.
+- Build *execution* is intentionally NOT exposed via MCP — it's a
+  long-running, stderr-streaming operation. The CLI's `-o json`
+  stream is the right surface. The cache-mgmt tools (`build_list`,
+  `build_inspect`, `build_prune`) ARE exposed via MCP — see below.
+
+Full walkthrough including image artifacts, cross-arch builds, and
+the `image_strategy: jar-wrap` variant for stock java-tron:
+[`specs/002-trond-build-pipeline/quickstart.md`](specs/002-trond-build-pipeline/quickstart.md).
+
+---
+
 ## Test-harness primitives (for agents driving CI / fuzz / chaos)
 
 These exist for agents that drive trond programmatically rather than
@@ -401,6 +479,18 @@ topic; don't paraphrase from training data.
    Use the upcoming `snapshot prune` (or just `rm` the JSON+log pair
    when the job is `state=stopped`).
 
+9. **Don't `rm -rf ~/.trond/builds`** to clean the build cache. Use
+   `trond build prune` so the manifests, image side-files, and
+   docker-stored images all get reclaimed consistently. Manual `rm`
+   leaves dangling docker layers and orphaned manifests that confuse
+   the next `trond build list`.
+
+10. **Don't pass `--keep-last N --confirm` alone to prune**. The CLI
+    rejects it for safety: that combo deletes everything except the N
+    newest entries, which is rarely the intent. Combine with `--all`
+    (to acknowledge near-wipe) or scope with `--orphan` / `--older-than`.
+    Same guard applies to the MCP `build_prune` tool.
+
 ---
 
 ## Schema discovery
@@ -444,7 +534,7 @@ Configure once in your client. Example for Claude Desktop
 }
 ```
 
-The server registers 16 tools (read-only unless marked):
+The server registers 19 tools (read-only unless marked):
 
 - **inspection** (3): `list`, `status`, `inspect`
 - **diagnostic** (4): `doctor`, `version`, `health`, `diagnose`
@@ -453,6 +543,10 @@ The server registers 16 tools (read-only unless marked):
 - **snapshot** (4): `snapshot_sources`, `snapshot_list`, `snapshot_jobs`,
   `snapshot_download` (destructive, emits MCP progress notifications)
 - **knowledge** (2): `knowledge_list`, `knowledge_get`
+- **build** (3): `build_list`, `build_inspect`, `build_prune`
+  (destructive — dry-run by default; `confirm=true` actually deletes).
+  Build *execution* is NOT exposed via MCP; call the CLI directly
+  for that (see Workflow 5).
 
 Destructive tools carry the MCP `destructiveHint` annotation so MCP
 clients prompt the user. The server's `Instructions` field
