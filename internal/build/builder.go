@@ -218,25 +218,44 @@ func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 		return nil, err
 	}
 
-	imageRef, imageDigest, ok := pins.Resolve(req.JDKVersion, req.Platform, req.BuilderImageOverride)
-	if !ok {
-		platforms := pins.Platforms(req.JDKVersion)
-		if len(platforms) == 0 {
+	// Builder identity: for docker we resolve the pinned eclipse-
+	// temurin image; for host we hash the host's `java -version`
+	// output. Either way the result feeds CacheKey.BuilderImageDigest
+	// so the cache invalidates when the toolchain changes.
+	var imageRef, imageDigest string
+	if req.Builder == "host" {
+		var err error
+		imageRef, imageDigest, err = resolveHostIdentity(ctx)
+		if err != nil {
 			return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
-				"no pinned builder image for JDK version %q (available: %v)",
-				req.JDKVersion, pins.Versions()).
+				"resolve host builder identity: %s", err.Error()).
 				WithSuggestions(
-					"Use one of "+strings.Join(pins.Versions(), ", "),
+					"Verify 'java' is installed and on PATH",
+					"Or use --builder docker to skip the host JDK requirement",
+				)
+		}
+	} else {
+		var ok bool
+		imageRef, imageDigest, ok = pins.Resolve(req.JDKVersion, req.Platform, req.BuilderImageOverride)
+		if !ok {
+			platforms := pins.Platforms(req.JDKVersion)
+			if len(platforms) == 0 {
+				return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+					"no pinned builder image for JDK version %q (available: %v)",
+					req.JDKVersion, pins.Versions()).
+					WithSuggestions(
+						"Use one of "+strings.Join(pins.Versions(), ", "),
+						"Or pass --builder-image-override <ref@sha256:...>",
+					)
+			}
+			return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+				"JDK %q has no pinned builder image for platform %q (supported: %v)",
+				req.JDKVersion, req.Platform, platforms).
+				WithSuggestions(
+					"Use one of platforms "+strings.Join(platforms, ", "),
 					"Or pass --builder-image-override <ref@sha256:...>",
 				)
 		}
-		return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
-			"JDK %q has no pinned builder image for platform %q (supported: %v)",
-			req.JDKVersion, req.Platform, platforms).
-			WithSuggestions(
-				"Use one of platforms "+strings.Join(platforms, ", "),
-				"Or pass --builder-image-override <ref@sha256:...>",
-			)
 	}
 
 	src := Source{Path: req.SourcePath, RevisionSpec: req.RevisionSpec}
@@ -280,7 +299,7 @@ func buildJAR(ctx context.Context, r *resolved, started time.Time) (*Manifest, e
 
 	_ = os.Remove(outTmp) // stale .tmp from a prior cancelled run
 
-	runErr := defaultRunner.RunDockerBuild(ctx, r, outDir, outTmp)
+	runErr := defaultRunner.RunBuild(ctx, r, outDir, outTmp)
 	if runErr != nil {
 		_ = os.Remove(outTmp)
 		if errors.Is(ctx.Err(), context.Canceled) {

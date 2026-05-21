@@ -26,7 +26,7 @@ type recordingRunner struct {
 	respectCancel  bool
 }
 
-func (r *recordingRunner) RunDockerBuild(ctx context.Context, res *resolved, outDir, outTmp string) error {
+func (r *recordingRunner) RunBuild(ctx context.Context, res *resolved, outDir, outTmp string) error {
 	r.called = true
 	r.resolved = res
 	r.outTmp = outTmp
@@ -52,7 +52,7 @@ func (r *recordingRunner) RunDockerBuild(ctx context.Context, res *resolved, out
 // withMockRunner swaps the package-level defaultRunner for the
 // duration of one test. Restoration is registered via t.Cleanup so
 // parallel-safe across the suite.
-func withMockRunner(t *testing.T, mock dockerRunner) {
+func withMockRunner(t *testing.T, mock buildRunner) {
 	t.Helper()
 	orig := defaultRunner
 	defaultRunner = mock
@@ -317,7 +317,7 @@ type capturingRunner struct {
 	cb func(*resolved)
 }
 
-func (c *capturingRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir, outTmp string) error {
+func (c *capturingRunner) RunBuild(ctx context.Context, r *resolved, outDir, outTmp string) error {
 	c.cb(r)
 	// Return error so Run cleans up and exits — caller doesn't care
 	// about the result, only the captured resolved.

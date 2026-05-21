@@ -2,27 +2,30 @@ package build
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 )
 
-// dockerRunner abstracts the "run a docker command" step so tests can
-// substitute a recorder/mock without spinning up a real Docker
-// daemon. Production wiring is the exec-based realDockerRunner.
+// buildRunner abstracts the "run gradle to produce the artifact"
+// step so tests can substitute a recorder/mock without spinning up
+// a real Docker daemon (or a real gradle install for host-builder
+// tests). Production has two implementations: realDockerRunner runs
+// gradle inside a pinned eclipse-temurin container; realHostRunner
+// runs it directly via the source tree's ./gradlew wrapper.
 //
 // The interface intentionally accepts the full argv (not pieces) —
 // tests assert on that argv to enforce FR-022's argv-only invocation
 // contract (no `bash -c "...interpolated..."`).
-type dockerRunner interface {
-	RunDockerBuild(ctx context.Context, r *resolved, outDir, outTmp string) error
+type buildRunner interface {
+	RunBuild(ctx context.Context, r *resolved, outDir, outTmp string) error
 }
 
 // defaultRunner is package-level so tests can swap it via
 // `t.Cleanup(func() { defaultRunner = orig })`. Production uses
-// realDockerRunner which shells out to the docker CLI.
-var defaultRunner dockerRunner = realDockerRunner{}
+// dispatchRunner which routes to realDockerRunner or realHostRunner
+// based on r.req.Builder ("docker" or "host").
+var defaultRunner buildRunner = dispatchRunner{}
 
 // dockerBuildScript (JAR variant) is the only piece of shell trond
 // runs for artifact=jar and it's a compile-time constant. User input
@@ -84,13 +87,24 @@ docker images -q --no-trunc --filter dangling=false 2>/dev/null | sort -u > "/ou
 docker images -q --no-trunc --filter dangling=false 2>/dev/null | sort -u > "/out/$CACHE_KEY-images-after"
 `
 
+// dispatchRunner is the production buildRunner. It looks at
+// r.req.Builder and forwards to the docker or host variant. Pulling
+// the routing into its own type (rather than putting an `if Builder
+// == "host"` check inside realDockerRunner) keeps each concrete
+// runner single-purpose and lets tests substitute either backend
+// independently.
+type dispatchRunner struct{}
+
+func (dispatchRunner) RunBuild(ctx context.Context, r *resolved, outDir, outTmp string) error {
+	if r.req.Builder == "host" {
+		return realHostRunner{}.RunBuild(ctx, r, outDir, outTmp)
+	}
+	return realDockerRunner{}.RunBuild(ctx, r, outDir, outTmp)
+}
+
 type realDockerRunner struct{}
 
-func (realDockerRunner) RunDockerBuild(ctx context.Context, r *resolved, outDir, outTmp string) error {
-	if r.req.Builder == "host" {
-		return fmt.Errorf("--builder host not implemented in Phase 1 (use docker)")
-	}
-
+func (realDockerRunner) RunBuild(ctx context.Context, r *resolved, outDir, outTmp string) error {
 	// Gradle cache: use a DOCKER NAMED VOLUME, not a bind mount.
 	// macOS Docker Desktop's bind-mount layer (virtiofs) doesn't
 	// reliably preserve the exec bit for files the container writes

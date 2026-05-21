@@ -32,7 +32,11 @@ type adapter struct {
 	stub TestRunner
 }
 
-func (a *adapter) RunDockerBuild(ctx context.Context, r *resolved, outDir, outTmp string) error {
+// RunBuild satisfies the internal buildRunner interface by
+// translating the new method shape down to the exported TestRunner's
+// historical RunDockerBuild signature. Keeps the public test API
+// stable while the internal interface evolves.
+func (a *adapter) RunBuild(ctx context.Context, r *resolved, _, outTmp string) error {
 	return a.stub.RunDockerBuild(ctx, r.req.SourcePath, outTmp,
 		r.req.GradleTask, r.req.GradleArgs, r.req.Env)
 }

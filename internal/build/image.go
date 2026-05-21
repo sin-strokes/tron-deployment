@@ -65,7 +65,7 @@ func buildImage(ctx context.Context, r *resolved, started time.Time) (*Manifest,
 		_ = os.Remove(filepath.Join(outDir, r.cacheKeyStr+"-images-after"))
 	}()
 
-	if err := defaultRunner.RunDockerBuild(ctx, r, outDir, "" /* outTmp unused for image */); err != nil {
+	if err := defaultRunner.RunBuild(ctx, r, outDir, "" /* outTmp unused for image */); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil, output.NewErrorf("BUILD_CANCELLED", 130,
 				"build cancelled by user").
