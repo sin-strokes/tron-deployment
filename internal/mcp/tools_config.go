@@ -100,7 +100,7 @@ func renderTool(ctx context.Context, _ *mcp.CallToolRequest, args renderArg) (*m
 		}
 		switch runtime {
 		case "docker":
-			row["compose"] = render.RenderCompose(parsed.Name, parsed, node, "", jvmArgs)
+			row["compose"] = render.RenderCompose(parsed.Name, parsed, node, "", jvmArgs, "")
 		case "jar":
 			row["systemd"] = render.RenderSystemdUnit(parsed, node, jvmArgs, "", "")
 		}

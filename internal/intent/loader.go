@@ -345,15 +345,33 @@ func Validate(intent *Intent) error {
 			}
 			switch {
 			case rt == "docker" && artifact == "jar":
-				return fmt.Errorf("nodes[%d]: target.runtime=docker requires build.artifact=image (Phase 3 work); set target.runtime=jar or omit it (build intents default to jar)", i)
+				return fmt.Errorf("nodes[%d]: target.runtime=docker cannot consume build.artifact=jar — set build.artifact=image (the docker runtime path) or switch target.runtime=jar", i)
 			case rt == "jar" && artifact == "image":
 				return fmt.Errorf("nodes[%d]: target.runtime=jar cannot consume build.artifact=image — set artifact to jar or switch runtime", i)
-			case rt == "docker" && artifact == "image":
-				// Phase 3 will wire this into compose. For now, fail
-				// at validate time instead of letting apply hit a
-				// NOT_IMPLEMENTED inside the build pipeline — same
-				// fail-fast principle as the other two branches.
-				return fmt.Errorf("nodes[%d]: build.artifact=image is Phase 3 work (not yet wired into the docker runtime); use build.artifact=jar with target.runtime=jar for now", i)
+			}
+			// Cross-arch image builds are a footgun. trond's image
+			// path mounts /var/run/docker.sock into the builder
+			// container so gradle's docker plugin can talk to the
+			// HOST docker daemon directly. That daemon runs the
+			// host's CPU arch regardless of the builder container's
+			// --platform — so an arm64 builder on an amd64 host
+			// still produces an amd64 image. The cache key would
+			// then claim arm64 but the artifact would be amd64,
+			// silently shipping the wrong arch to a deploy target.
+			//
+			// jar-wrap (Phase 5d) is SAFE for cross-arch: it runs
+			// `docker build` directly from the host (no docker.sock
+			// bind-mount), so --platform works correctly. The
+			// rejection only applies to the gradle strategy.
+			imgStrategy := n.Build.ImageStrategy
+			if imgStrategy == "" {
+				imgStrategy = "gradle"
+			}
+			if artifact == "image" && imgStrategy == "gradle" && n.Build.Platform != "" {
+				hostPlatform := DefaultPlatform()
+				if n.Build.Platform != hostPlatform {
+					return fmt.Errorf("nodes[%d]: build.artifact=image with platform=%q is unsafe on host=%q using image_strategy=gradle — docker.sock-mounted builds always use the host daemon's arch, so the produced image would NOT be %q. Either: switch to image_strategy=jar-wrap (cross-arch safe), set platform=%q, or use build.artifact=jar", i, n.Build.Platform, hostPlatform, n.Build.Platform, hostPlatform)
+				}
 			}
 		}
 	}

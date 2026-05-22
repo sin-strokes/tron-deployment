@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/build-prune.schema.json",
+  "title": "trond build prune output",
+  "description": "Returned by `trond build prune ... -o json`. Reports the deletion plan and (when --confirm) what was actually removed.",
+  "type": "object",
+  "required": ["plan", "freed_bytes", "dry_run"],
+  "properties": {
+    "dry_run": {
+      "type": "boolean",
+      "description": "True when --confirm was NOT passed. plan is populated; removed is null/absent."
+    },
+    "freed_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total bytes reclaimed (or, in dry-run mode, the bytes that WOULD be reclaimed)."
+    },
+    "plan": {
+      "type": "array",
+      "description": "Entries that match the prune policy. On dry_run=false this is the same set as `removed` minus any per-entry failures.",
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "removed": {
+      "type": "array",
+      "description": "Entries that were actually removed. Omitted when dry_run=true.",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "description": "Same shape as `trond build list` entries — manifest fields plus size_bytes/orphaned.",
+      "required": [
+        "cache_key",
+        "artifact_kind",
+        "size_bytes",
+        "orphaned",
+        "created_at"
+      ],
+      "properties": {
+        "cache_key":           { "type": "string" },
+        "source_path":         { "type": "string" },
+        "source_revision":     { "type": "string" },
+        "patch_hash":          { "type": "string" },
+        "dirty":               { "type": "boolean" },
+        "builder_image":       { "type": "string" },
+        "builder_image_digest":{ "type": "string" },
+        "jdk_version":         { "type": "string" },
+        "artifact_kind":       { "type": "string", "enum": ["jar","image"] },
+        "artifact_path":       { "type": "string" },
+        "image_tag":           { "type": "string" },
+        "image_id":            { "type": "string" },
+        "sha256":              { "type": "string" },
+        "gradle_task":         { "type": "string" },
+        "gradle_args":         { "type": "array", "items": { "type": "string" } },
+        "builder":             { "type": "string" },
+        "platform":            { "type": "string" },
+        "duration_ms":         { "type": "integer" },
+        "created_at":          { "type": "string", "format": "date-time" },
+        "size_bytes":          { "type": "integer", "minimum": 0 },
+        "orphaned":            { "type": "boolean" }
+      }
+    }
+  }
+}

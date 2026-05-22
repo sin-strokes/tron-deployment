@@ -44,7 +44,8 @@ var allowedCommands = map[string]bool{
 	"chown":     true,
 	"tee":       true,
 	"rm":        true, // jar runtime cleanup; constrained by quoted args
-	"sha256sum": true, // jar download integrity check
+	"mv":        true, // Phase 4 SSH build pipeline: atomic .tmp → final rename
+	"sha256sum": true, // jar download integrity check + Phase 4 transfer-skip probe
 	// JVM probe (preflight) — does NOT execute arbitrary class paths
 	"java": true,
 }

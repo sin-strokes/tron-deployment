@@ -118,7 +118,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		memGB = 16
 	}
 	jvmArgs := render.JVMArgsString(memGB, 17, node.JVM)
-	composeYAML := render.RenderCompose(nodeName, parsed, node, "", jvmArgs)
+	composeYAML := render.RenderCompose(nodeName, parsed, node, "", jvmArgs, "")
 
 	rt := runtime.NewDockerRuntime(tgt, paths.Deployments())
 	opts := runtime.DeployOpts{

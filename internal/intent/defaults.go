@@ -6,18 +6,6 @@ import (
 	"runtime"
 )
 
-// anyNodeHasBuild reports whether any node in the slice declares a
-// `build:` block. Used by DefaultRuntime to choose runtime=jar
-// when the intent is configuring an inner-loop build (Phase 2).
-func anyNodeHasBuild(nodes []NodeSpec) bool {
-	for i := range nodes {
-		if nodes[i].Build != nil {
-			return true
-		}
-	}
-	return false
-}
-
 // DefaultRuntime is the single source of truth for the runtime
 // default rule. ApplyDefaults uses it to fill intent.Target.Runtime;
 // intent.Validate uses it to derive the would-be effective runtime
@@ -25,12 +13,32 @@ func anyNodeHasBuild(nodes []NodeSpec) bool {
 // it as a last-resort fallback for programmatic callers that
 // bypass ApplyDefaults. Three sites, one rule.
 //
-// Rule: intents with any `build:` block default to "jar" (the only
-// Phase 2 wired path). Everything else stays on the legacy "docker"
-// default.
+// Rules (post-Phase 3):
+//
+//  1. Intents with a `build:` block default the runtime to match
+//     the build artifact:
+//     artifact: jar    → runtime: jar
+//     artifact: image  → runtime: docker
+//     (Artifact itself defaults to "jar" if unspecified — same as
+//     applyNodeDefaults — so a bare `build: { source: ... }` still
+//     ends up jar/jar.)
+//  2. Intents without any `build:` block keep the legacy "docker"
+//     default unchanged.
 func DefaultRuntime(intent *Intent) string {
-	if anyNodeHasBuild(intent.Nodes) {
-		return "jar"
+	for i := range intent.Nodes {
+		if intent.Nodes[i].Build == nil {
+			continue
+		}
+		artifact := intent.Nodes[i].Build.Artifact
+		if artifact == "" {
+			artifact = "jar"
+		}
+		switch artifact {
+		case "image":
+			return "docker"
+		default:
+			return "jar"
+		}
 	}
 	return "docker"
 }
@@ -240,6 +248,17 @@ func applyNodeDefaults(node *NodeSpec) {
 			case "image":
 				node.Build.GradleTask = "dockerBuild"
 			}
+		}
+		// image_strategy defaults to "gradle" for backward compat
+		// with Phase 3. Users on stock java-tron set
+		// `image_strategy: jar-wrap` explicitly — trond then runs
+		// the Phase 5d path which produces the image from a
+		// JAR-wrap Dockerfile and ignores GradleTask's dockerBuild
+		// default. We do NOT auto-detect strategy: requiring
+		// explicit opt-in keeps existing tron-docker-style intents
+		// working unchanged.
+		if node.Build.Artifact == "image" && node.Build.ImageStrategy == "" {
+			node.Build.ImageStrategy = "gradle"
 		}
 	}
 

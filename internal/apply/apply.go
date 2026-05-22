@@ -233,13 +233,29 @@ func Apply(ctx context.Context, opts Options) (*Result, error) {
 
 	switch runtimeType {
 	case "docker":
-		deployOpts.ComposeData = []byte(render.RenderCompose(opts.Intent.Name, opts.Intent, node, "", jvmArgs))
+		// builtImageTag is non-empty when intent had `build:` with
+		// artifact: image — render against the local tag + emit
+		// pull_policy: never so compose doesn't pull from a registry.
+		deployOpts.ComposeData = []byte(render.RenderCompose(opts.Intent.Name, opts.Intent, node, "", jvmArgs, builtImageTag))
 		rt := runtime.NewDockerRuntime(opts.Target, opts.DeploymentsDir)
 		if err := rt.Deploy(ctx, deployOpts); err != nil {
 			return nil, fmt.Errorf("docker deploy: %w", err)
 		}
 	case "jar":
+		// Phase 4: when intent has `build:` + target is SSH, scp the
+		// locally-built JAR to the remote BEFORE rendering the
+		// systemd unit. The unit's ExecStart will reference the
+		// remote-side path. Local targets keep the cache-path
+		// reference (no transfer needed; systemd reads the cache
+		// path directly on the same fs).
 		jarPath := builtJarPath // empty when node has no `build:` block
+		if builtJarPath != "" && opts.Intent.Target.Type == "ssh" {
+			remoteJar := filepath.Join(node.InstallPath, "FullNode.jar")
+			if err := transferBuiltJAR(ctx, opts.Target, buildSummary, builtJarPath, remoteJar); err != nil {
+				return nil, err
+			}
+			jarPath = remoteJar
+		}
 		deployOpts.SystemdData = []byte(render.RenderSystemdUnit(opts.Intent, node, jvmArgs, jarPath, ""))
 		// JarPath still points at the install_path location for `mkdir -p` /
 		// config layout; only the systemd ExecStart references jarPath above.
@@ -373,10 +389,27 @@ func validateOptions(o Options) error {
 		switch {
 		case rt == "docker" && artifact == "jar":
 			return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
-				"node %q: target.runtime=docker requires build.artifact=image (Phase 3 work); use target.runtime=jar for now", n.Type)
+				"node %q: target.runtime=docker cannot consume build.artifact=jar — set build.artifact=image (docker path) or switch target.runtime=jar", n.Type)
 		case rt == "jar" && artifact == "image":
 			return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
 				"node %q: target.runtime=jar cannot consume build.artifact=image — set build.artifact=jar or switch runtime", n.Type)
+		}
+		// Mirror intent.Validate's cross-arch-image guard so callers
+		// bypassing intent.Validate still get rejected. See loader.go
+		// for the full rationale. jar-wrap strategy is safe across
+		// arches (no docker.sock bind-mount); only gradle strategy
+		// has the silent wrong-arch hazard.
+		imgStrategy := n.Build.ImageStrategy
+		if imgStrategy == "" {
+			imgStrategy = "gradle"
+		}
+		if artifact == "image" && imgStrategy == "gradle" && n.Build.Platform != "" {
+			hostPlatform := intent.DefaultPlatform()
+			if n.Build.Platform != hostPlatform {
+				return output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+					"node %q: build.artifact=image + image_strategy=gradle with platform=%q is unsafe on host=%q — switch to image_strategy=jar-wrap for cross-arch",
+					n.Type, n.Build.Platform, hostPlatform)
+			}
 		}
 	}
 	return nil

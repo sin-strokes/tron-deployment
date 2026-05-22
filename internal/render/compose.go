@@ -75,14 +75,26 @@ const (
 // volume, and config-file basename. Single-node deploys pass intent.Name;
 // `network create` passes the per-node "<network>-node<i>" so multi-node
 // networks don't collide on container_name.
-func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configPath string, jvmArgs string) string {
+//
+// imageOverride, when non-empty, replaces the image field (and suppresses
+// the version-suffix logic). Used by the build pipeline (Phase 3) when
+// `build.artifact: image` produces a locally-tagged image — the
+// generated compose then references that local tag and the renderer
+// also emits `pull_policy: never` so compose does not try to fetch
+// the tag from a remote registry.
+func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configPath string, jvmArgs string, imageOverride string) string {
 	if name == "" {
 		name = i.Name
 	}
 
-	image := node.Image
-	if node.Version != "" && node.Version != "latest" {
+	var image string
+	switch {
+	case imageOverride != "":
+		image = imageOverride
+	case node.Version != "" && node.Version != "latest":
 		image = fmt.Sprintf("%s:%s", node.Image, node.Version)
+	default:
+		image = node.Image
 	}
 
 	ports := renderComposePorts(node)
@@ -104,6 +116,13 @@ func RenderCompose(name string, i *intent.Intent, node *intent.NodeSpec, configP
 	sb.WriteString("services:\n")
 	sb.WriteString(fmt.Sprintf("  %s:\n", name))
 	sb.WriteString(fmt.Sprintf("    image: %s\n", image))
+	if imageOverride != "" {
+		// Locally-built image; compose 3.9+ honors pull_policy.
+		// Without this, `docker compose up` would try to pull the
+		// tag from docker hub and either fail (no remote) or pull
+		// an unrelated upstream image.
+		sb.WriteString("    pull_policy: never\n")
+	}
 	sb.WriteString(fmt.Sprintf("    container_name: %s\n", name))
 	sb.WriteString(fmt.Sprintf("    restart: %s\n", restartPolicy))
 	if len(node.Labels) > 0 {

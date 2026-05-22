@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tronprotocol/tron-deployment/blob/master/schemas/output/build-list.schema.json",
+  "title": "trond build list output",
+  "description": "Returned by `trond build list -o json`. Walks the on-disk build cache and returns one entry per cached artifact.",
+  "type": "object",
+  "required": ["entries", "count"],
+  "properties": {
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of entries in the array. Convenience field; equals entries.length."
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "description": "A cached build entry: persisted manifest fields plus size_bytes and orphaned. Same shape as `trond build inspect -o json` output.",
+      "required": [
+        "cache_key",
+        "source_revision",
+        "dirty",
+        "artifact_kind",
+        "builder_image",
+        "jdk_version",
+        "gradle_task",
+        "builder",
+        "duration_ms",
+        "created_at",
+        "size_bytes",
+        "orphaned"
+      ],
+      "properties": {
+        "cache_key":           { "type": "string" },
+        "source_path":         { "type": "string" },
+        "source_revision":     { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "patch_hash":          { "type": "string" },
+        "dirty":               { "type": "boolean" },
+        "builder_image":       { "type": "string" },
+        "builder_image_digest":{ "type": "string" },
+        "jdk_version":         { "type": "string", "enum": ["8","11","17","21"] },
+        "artifact_kind":       { "type": "string", "enum": ["jar","image"] },
+        "artifact_path":       { "type": "string" },
+        "image_tag":           { "type": "string" },
+        "image_id":            { "type": "string" },
+        "sha256":              { "type": "string" },
+        "gradle_task":         { "type": "string" },
+        "gradle_args":         { "type": "array", "items": { "type": "string" } },
+        "builder":             { "type": "string", "enum": ["docker","host"] },
+        "platform":            { "type": "string" },
+        "duration_ms":         { "type": "integer", "minimum": 0 },
+        "created_at":          { "type": "string", "format": "date-time" },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "On-disk size. JAR: file size. Image: docker image inspect's reported size. 0 for orphans or when docker is unreachable."
+        },
+        "orphaned": {
+          "type": "boolean",
+          "description": "True when the manifest references an artifact that no longer exists (JAR file deleted, image rm'd from docker)."
+        }
+      }
+    }
+  }
+}

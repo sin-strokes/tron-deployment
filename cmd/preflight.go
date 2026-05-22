@@ -80,6 +80,11 @@ func runPreflight(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkPorts(cmd, tgt, &node)...)
 	}
 
+	// Build-side checks (LOCAL machine, not the target). Only runs
+	// when at least one node has a `build:` block; build-less intents
+	// pay no cost. See preflight_build.go for the policy details.
+	checks = append(checks, preflightBuildChecks(cmd.Context(), parsed, preflightIntentPath)...)
+
 	for _, c := range checks {
 		if c.Status == "fail" {
 			allPassed = false

@@ -57,6 +57,12 @@ type Request struct {
 	// cross-build the JAR that java-tron actually supports on a
 	// given target architecture (amd64 → JDK 8, arm64 → JDK 17).
 	Platform string
+	// ImageStrategy picks between "gradle" (Phase 3 — source must
+	// have a gradle dockerBuild task) and "jar-wrap" (Phase 5d —
+	// produce JAR, then COPY into a trond-embedded Dockerfile).
+	// Only meaningful when ArtifactKind=image. Empty defaults to
+	// "gradle" for backward compatibility.
+	ImageStrategy string
 }
 
 // Result is the JSON-serializable success payload. Mirrors
@@ -129,7 +135,7 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	// Fast path: cheap stat, no lock.
-	if hit, _ := Lookup(r.key); hit != nil && hit.Hit {
+	if hit, _ := Lookup(ctx, r.key); hit != nil && hit.Hit {
 		return resultFromManifest(hit.Manifest, true, time.Since(started).Milliseconds()), nil
 	}
 
@@ -142,20 +148,51 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	defer release()
 
 	// Re-check after lock — winner of the race may have finished.
-	if hit, _ := Lookup(r.key); hit != nil && hit.Hit {
+	if hit, _ := Lookup(ctx, r.key); hit != nil && hit.Hit {
 		return resultFromManifest(hit.Manifest, true, time.Since(started).Milliseconds()), nil
 	}
 
 	_ = AppendAuditEvent(PhaseInProgress, r.cacheKeyStr, "", started)
 
-	if r.req.ArtifactKind != "jar" {
-		_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, "NOT_IMPLEMENTED", started)
-		return nil, output.NewErrorf("NOT_IMPLEMENTED", output.ExitGeneralError,
-			"artifact=%s is not yet supported by Phase 1 (jar only)", r.req.ArtifactKind)
+	// Image builds with strategy=gradle mount /var/run/docker.sock
+	// into the builder container so gradle's docker plugin can call
+	// back into the host daemon. That extends trust to anything
+	// inside /src (build.gradle, plugins, transitive build scripts)
+	// — they can `docker run --privileged` against the host. trond
+	// defaults to trusting the source tree (it's the user's own
+	// checkout), but surface the boundary so operators building
+	// third-party forks notice once per invocation.
+	//
+	// jar-wrap strategy doesn't mount docker.sock — the JAR is
+	// produced in a normal Phase 1-2 builder + then docker build
+	// runs on the host with a trond-controlled Dockerfile. No
+	// notice needed.
+	if r.req.ArtifactKind == "image" && r.req.ImageStrategy != "jar-wrap" {
+		fmt.Fprintln(os.Stderr,
+			"notice: build.artifact=image (strategy=gradle) mounts /var/run/docker.sock into the builder; "+
+				"the source tree's build.gradle gains host docker access. "+
+				"Only run against trusted sources.")
 	}
 
-	manifest, err := buildJAR(ctx, r, started)
-	if err != nil {
+	var manifest *Manifest
+	var artifactErr error
+	switch r.req.ArtifactKind {
+	case "jar":
+		manifest, artifactErr = buildJAR(ctx, r, started)
+	case "image":
+		switch r.req.ImageStrategy {
+		case "jar-wrap":
+			manifest, artifactErr = buildImageJarWrap(ctx, r, started)
+		default:
+			// "gradle" or empty (default per applyNodeDefaults).
+			manifest, artifactErr = buildImage(ctx, r, started)
+		}
+	default:
+		_ = AppendAuditEvent(PhaseFailed, r.cacheKeyStr, "VALIDATION_ERROR", started)
+		return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+			"unknown artifact_kind %q (must be jar or image)", r.req.ArtifactKind)
+	}
+	if err := artifactErr; err != nil {
 		// Audit + propagate. The buildJAR helper has already done
 		// best-effort cleanup of .tmp output.
 		var se *output.StructuredError
@@ -181,15 +218,44 @@ func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 		return nil, err
 	}
 
-	imageRef, imageDigest, ok := pins.Resolve(req.JDKVersion, req.BuilderImageOverride)
-	if !ok {
-		return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
-			"no pinned builder image for JDK version %q (available: %v)",
-			req.JDKVersion, pins.Versions()).
-			WithSuggestions(
-				"Use one of "+strings.Join(pins.Versions(), ", "),
-				"Or pass --builder-image-override <ref@sha256:...>",
-			)
+	// Builder identity: for docker we resolve the pinned eclipse-
+	// temurin image; for host we hash the host's `java -version`
+	// output. Either way the result feeds CacheKey.BuilderImageDigest
+	// so the cache invalidates when the toolchain changes.
+	var imageRef, imageDigest string
+	if req.Builder == "host" {
+		var err error
+		imageRef, imageDigest, err = resolveHostIdentity(ctx)
+		if err != nil {
+			return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+				"resolve host builder identity: %s", err.Error()).
+				WithSuggestions(
+					"Verify 'java' is installed and on PATH",
+					"Or use --builder docker to skip the host JDK requirement",
+				)
+		}
+	} else {
+		var ok bool
+		imageRef, imageDigest, ok = pins.Resolve(req.JDKVersion, req.Platform, req.BuilderImageOverride)
+		if !ok {
+			platforms := pins.Platforms(req.JDKVersion)
+			if len(platforms) == 0 {
+				return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+					"no pinned builder image for JDK version %q (available: %v)",
+					req.JDKVersion, pins.Versions()).
+					WithSuggestions(
+						"Use one of "+strings.Join(pins.Versions(), ", "),
+						"Or pass --builder-image-override <ref@sha256:...>",
+					)
+			}
+			return nil, output.NewErrorf("VALIDATION_ERROR", output.ExitValidationError,
+				"JDK %q has no pinned builder image for platform %q (supported: %v)",
+				req.JDKVersion, req.Platform, platforms).
+				WithSuggestions(
+					"Use one of platforms "+strings.Join(platforms, ", "),
+					"Or pass --builder-image-override <ref@sha256:...>",
+				)
+		}
 	}
 
 	src := Source{Path: req.SourcePath, RevisionSpec: req.RevisionSpec}
@@ -202,15 +268,28 @@ func resolveBuild(ctx context.Context, req Request) (*resolved, error) {
 			)
 	}
 
+	// For host builds, BuilderImageDigest already captures the exact
+	// JVM in use (sha256 of `java -version` output). Including
+	// req.JDKVersion in the key on top of that would fragment the
+	// cache pointlessly: two `--builder host` invocations with the
+	// same actual JDK but different --jdk flags (e.g. --jdk 8 vs
+	// --jdk 17, both falling back to whatever the host has)
+	// rebuild identically. Drop JDKVersion from the host-builder
+	// key so cache hits work as expected.
+	keyJDK := req.JDKVersion
+	if req.Builder == "host" {
+		keyJDK = ""
+	}
 	key := CacheKey{
 		GitRevision:        src.ResolvedRevision,
 		PatchHash:          src.PatchHash,
 		BuilderImageDigest: imageDigest,
-		JDKVersion:         req.JDKVersion,
+		JDKVersion:         keyJDK,
 		ArtifactKind:       req.ArtifactKind,
 		GradleTask:         req.GradleTask,
 		GradleArgs:         append([]string(nil), req.GradleArgs...),
 		Platform:           req.Platform,
+		ImageStrategy:      req.ImageStrategy,
 	}
 	return &resolved{
 		req:         req,
@@ -232,7 +311,7 @@ func buildJAR(ctx context.Context, r *resolved, started time.Time) (*Manifest, e
 
 	_ = os.Remove(outTmp) // stale .tmp from a prior cancelled run
 
-	runErr := defaultRunner.RunDockerBuild(ctx, r, outDir, outTmp)
+	runErr := defaultRunner.RunBuild(ctx, r, outDir, outTmp)
 	if runErr != nil {
 		_ = os.Remove(outTmp)
 		if errors.Is(ctx.Err(), context.Canceled) {

@@ -67,6 +67,7 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, trondVersion string) 
 	registerKnowledgeTools(server)
 	registerDriftTools(server)
 	registerHealTools(server)
+	registerBuildTools(server)
 
 	// Beyond tools, MCP exposes resources (read-only data the agent
 	// can attach to a conversation) and prompts (pre-baked workflow

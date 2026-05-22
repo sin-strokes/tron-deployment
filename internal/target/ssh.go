@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -226,6 +227,159 @@ func (t *SSHTarget) Upload(ctx context.Context, localPath, remotePath string) er
 	}
 
 	return t.writeRemoteFile(ctx, remotePath, localData, 0644)
+}
+
+// PutFile streams a large local file to a remote path WITHOUT loading
+// the whole file into trond's heap (vs Upload which slurps everything).
+// Designed for the build pipeline's SSH-target path where the JAR is
+// ~200 MB and the deploy runs on a fairly constrained dev workstation.
+//
+// Atomicity: data lands at `remotePath.tmp` first, then `mv` renames
+// to the final path. A cancelled run via ctx (e.g. SIGINT during the
+// scp window) leaves only the .tmp (best-effort cleanup on the host
+// side handles that). The remote never observes a half-written JAR
+// being executed by systemd.
+//
+// FR-009 / FR-016 (Phase 4): SSH target build → scp → atomic install.
+func (t *SSHTarget) PutFile(ctx context.Context, localPath, remotePath string) error {
+	if t.client == nil {
+		return fmt.Errorf("ssh not connected")
+	}
+	if err := security.ValidateCommand("tee"); err != nil {
+		return err
+	}
+	if err := security.ValidateCommand("mv"); err != nil {
+		return err
+	}
+
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("open local %s: %w", localPath, err)
+	}
+	defer f.Close()
+
+	session, err := t.client.NewSession()
+	if err != nil {
+		return fmt.Errorf("new ssh session: %w", err)
+	}
+	defer session.Close()
+
+	session.Stdin = f
+
+	tmpPath := remotePath + ".tmp"
+	quotedTmp := shellQuote(tmpPath)
+	quotedFinal := shellQuote(remotePath)
+	quotedDir := shellQuote(filepath.Dir(remotePath))
+	// mkdir parent → tee bytes into .tmp → chmod 0644 → atomic mv.
+	// `set -e` inside the bash invocation so a failed step aborts
+	// the chain before mv promotes a partial file.
+	cmd := fmt.Sprintf(
+		"set -e; mkdir -p %s; tee %s > /dev/null; chmod 0644 %s; mv %s %s",
+		quotedDir, quotedTmp, quotedTmp, quotedTmp, quotedFinal,
+	)
+
+	done := make(chan error, 1)
+	go func() { done <- session.Run(cmd) }()
+
+	select {
+	case runErr := <-done:
+		if runErr != nil {
+			t.cleanupTmp(tmpPath)
+			return fmt.Errorf("put remote file %s: %w", remotePath, runErr)
+		}
+		return nil
+	case <-ctx.Done():
+		_ = session.Signal(ssh.SIGTERM)
+		_ = session.Close()
+		t.cleanupTmp(tmpPath)
+		return ctx.Err()
+	}
+}
+
+// cleanupTmp removes a leftover `.tmp` from a failed PutFile. The
+// removal is best-effort — if SSH is already wedged (the typical
+// reason PutFile failed in the first place), `rm` will also fail
+// and we surface a one-line stderr warning so an operator at least
+// knows there's stale state to investigate. Without the warning the
+// .tmp file could persist across many failed deploys silently.
+//
+// Uses a bounded context derived from Background (not the parent ctx,
+// which is typically already cancelled when cleanup runs after SIGINT)
+// so the cleanup itself can't hang indefinitely on a wedged socket.
+func (t *SSHTarget) cleanupTmp(tmpPath string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := t.Exec(ctx, "rm", "-f", tmpPath); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"warning: failed to clean up partial transfer %s on %s: %v\n",
+			tmpPath, t.String(), err)
+	}
+}
+
+// Sha256IfExists returns the hex sha256 of a remote file, or empty
+// string when the remote ran sha256sum and it exited non-zero (file
+// missing, sha256sum binary absent, perms blocking the read — all
+// reported by the remote shell as an exit code). The caller treats
+// empty + nil err as "transfer needed", which is correct in those
+// cases: PutFile will either succeed or surface a more specific error.
+//
+// Transport-level failures (SSH session can't open, connection
+// dropped mid-command) DO bubble up as a non-nil err. The caller
+// would otherwise waste bandwidth on a doomed PutFile attempt that
+// hits the same broken link; surfacing the error lets it bail
+// quickly with the actual root cause.
+//
+// We deliberately skip a `test -f` preflight: a single sha256sum
+// call subsumes both "exists" and "compute hash". One round-trip,
+// one allowlisted command.
+func (t *SSHTarget) Sha256IfExists(ctx context.Context, remotePath string) (string, error) {
+	if t.client == nil {
+		return "", fmt.Errorf("ssh not connected")
+	}
+	out, err := t.Exec(ctx, "sha256sum", remotePath)
+	if err != nil {
+		// Propagate cancellation directly instead of fooling the
+		// caller into thinking "no file, scp it" → another SSH
+		// round-trip → eventually surfaces cancellation. Faster
+		// bail-out when the user hit Ctrl+C.
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", ctx.Err()
+		}
+		// The remote shell ran the command and it exited non-zero
+		// (file missing, sha256sum absent, permission denied, etc.).
+		// Treat as "no usable hash" — caller falls through to PutFile.
+		var exitErr *ssh.ExitError
+		if errors.As(err, &exitErr) {
+			return "", nil
+		}
+		// Anything else (NewSession failed, EOF on the SSH channel,
+		// dial error) is a transport-level problem. Bubbling lets
+		// the caller avoid wasting a large transfer on a broken link.
+		return "", err
+	}
+	// `sha256sum <path>` output: `<hex>  <path>\n`.
+	parts := strings.Fields(string(out))
+	if len(parts) < 1 {
+		return "", fmt.Errorf("unexpected sha256sum output: %q", string(out))
+	}
+	return parts[0], nil
+}
+
+// CommandExists reports whether a command is on the remote's PATH.
+// Used by preflight (FR-017) to fail-fast before apply when a
+// dependency like scp / sha256sum is missing on the target.
+//
+// Implementation: `which <name>` rather than `command -v`. `command`
+// is a shell builtin and isn't on trond's SSH allowlist (each
+// allowlist entry adds attack surface — keep narrow); `which` IS
+// allowlisted and behaves identically for the existence check we
+// care about.
+func (t *SSHTarget) CommandExists(ctx context.Context, name string) bool {
+	if t.client == nil {
+		return false
+	}
+	_, err := t.Exec(ctx, "which", name)
+	return err == nil
 }
 
 func (t *SSHTarget) Download(ctx context.Context, remotePath, localPath string) error {

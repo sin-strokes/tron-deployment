@@ -35,6 +35,7 @@ func TestMCPInputSchemas(t *testing.T) {
 		// optional because callers may pass `domain` instead.
 		"snapshot_download": {"dest"},
 		"knowledge_get":     {"topic"},
+		"build_inspect":     {"cache_key"},
 	}
 
 	emptyArgsTools := map[string]bool{
@@ -44,6 +45,11 @@ func TestMCPInputSchemas(t *testing.T) {
 		"snapshot_sources": true,
 		"snapshot_jobs":    true,
 		"knowledge_list":   true,
+		// build_list and build_prune have all-optional args (filter /
+		// sort / older_than / keep_last are all opt-in). build_inspect
+		// is the only one with a required arg.
+		"build_list":  true,
+		"build_prune": true,
 		// inspect takes no args from MCP — it always returns the
 		// full set. CLI `trond inspect` accepts a positional, but
 		// the MCP variant deliberately doesn't, to match the

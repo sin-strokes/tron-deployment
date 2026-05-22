@@ -25,7 +25,7 @@ type fakeBuilderRunner struct {
 
 func (f *fakeBuilderRunner) RunDockerBuild(
 	_ context.Context,
-	_ /* sourcePath */, outTmp string,
+	_ /* sourcePath */, _ /* outDir */, outTmp string,
 	_ /* gradleTask */ string,
 	_ /* gradleArgs */ []string,
 	_ /* env */ map[string]string,

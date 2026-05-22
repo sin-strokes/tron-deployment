@@ -26,6 +26,7 @@ type CacheKey struct {
 	GradleTask         string
 	GradleArgs         []string // already validated by ValidateGradleArgs
 	Platform           string   // docker --platform e.g. "linux/arm64"; empty = host default
+	ImageStrategy      string   // "gradle" | "jar-wrap"; only meaningful when ArtifactKind=image
 }
 
 // String produces the on-disk cache key:
@@ -96,15 +97,26 @@ func (k CacheKey) extraFold() string {
 	if platform == "" {
 		platform = "linux/amd64"
 	}
+	// ImageStrategy only varies the produced bytes when kind=image.
+	// For kind=jar it's irrelevant — keep the cache key stable by
+	// zeroing it. Empty string still folds to "" in the hash input
+	// when there's no contribution.
+	strategy := ""
+	if kind == "image" {
+		strategy = k.ImageStrategy
+		if strategy == "" {
+			strategy = "gradle"
+		}
+	}
 	args := append([]string(nil), k.GradleArgs...)
 	sort.Strings(args)
 	if jdk == "8" && kind == "jar" && task == "shadowJar" &&
-		platform == "linux/amd64" && len(args) == 0 {
+		platform == "linux/amd64" && len(args) == 0 && strategy == "" {
 		return ""
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "jdk=%s\nkind=%s\ntask=%s\nplatform=%s\nargs=%s\n",
-		jdk, kind, task, platform, strings.Join(args, "\x00"))
+	fmt.Fprintf(h, "jdk=%s\nkind=%s\ntask=%s\nplatform=%s\nstrategy=%s\nargs=%s\n",
+		jdk, kind, task, platform, strategy, strings.Join(args, "\x00"))
 	return hex.EncodeToString(h.Sum(nil))[:8]
 }
 
