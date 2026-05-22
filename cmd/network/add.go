@@ -3,6 +3,7 @@ package network
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -106,6 +107,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			c.Close()
 		}
 	}()
+
+	// Auto-attach the shared docker network so the new node can resolve
+	// sibling container names for P2P peering. Without this it lands only
+	// on its per-compose bridge and stays at 0 peers.
+	sharedNet := "trond-" + addNetworkName
+	if !slices.Contains(node.Networks, sharedNet) {
+		node.Networks = append(node.Networks, sharedNet)
+	}
 
 	templateDir := findTemplatesDir()
 	hocon, err := render.RenderHOCON(templateDir, parsed, node)
