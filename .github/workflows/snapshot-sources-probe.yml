@@ -1,0 +1,141 @@
+name: Snapshot Sources Probe
+
+# Weekly HEAD-check of every upstream snapshot mirror trond knows about.
+# The structural follow-up to Task #161 — when an upstream rotates an IP
+# or pulls a bucket (as the Nile S3 mirror did), the probe surfaces it
+# here rather than in a confused user's bug report.
+#
+# Policy: open exactly one rolling issue while any source is unhealthy.
+# Subsequent failures append a comment to that issue instead of spawning
+# duplicates. When all sources go green again, the workflow closes the
+# issue automatically.
+
+on:
+  schedule:
+    # Mondays 09:00 UTC. Early enough that whoever triages on Monday
+    # morning sees fresh results; late enough that European weekday
+    # cadence isn't disturbed if a flake comes through.
+    - cron: "0 9 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Build trond
+        run: go build -o bin/trond ./
+
+      - name: Probe sources
+        id: probe
+        run: |
+          set +e
+          ./bin/trond snapshot sources --probe \
+            --probe-timeout=10s \
+            --probe-parallelism=4 \
+            --stale-after=168h \
+            --output json > probe.json
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "--- text summary ---"
+          ./bin/trond snapshot sources --probe \
+            --probe-timeout=10s \
+            --probe-parallelism=4 \
+            --stale-after=168h || true
+          exit 0
+
+      - name: Open or update rolling issue (on failure)
+        if: steps.probe.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('probe.json', 'utf8'));
+            const summary = data.summary || {};
+            const bad = data.results.filter(r => r.status !== 'ok');
+
+            const label = 'snapshot-probe-stale';
+            const body = [
+              `Probe ran at \`${data.probed_at}\` and flagged **${bad.length}** of **${data.results.length}** sources as not OK.`,
+              '',
+              `Summary: \`${JSON.stringify(summary)}\``,
+              '',
+              '| status | network | kind | engine | domain | latest | age (d) | latency (ms) | detail |',
+              '|---|---|---|---|---|---|---|---|---|',
+              ...bad.map(r => `| ${r.status} | ${r.source.network} | ${r.source.kind} | ${r.source.engine} | ${r.source.domain} | ${r.latest_backup || '-'} | ${r.latest_age_days || '-'} | ${r.latency_ms} | ${r.err || ''} |`),
+              '',
+              'Run locally to reproduce:',
+              '```bash',
+              'trond snapshot sources --probe',
+              '```',
+              '',
+              `Edit \`internal/snapshot/sources.go\` to update mirror URLs once a working replacement is identified. Auto-filed by \`.github/workflows/snapshot-sources-probe.yml\`.`,
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const existing = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: label, per_page: 5,
+            });
+
+            if (existing.data.length === 0) {
+              const created = await github.rest.issues.create({
+                owner, repo,
+                title: `[snapshot-probe] ${bad.length}/${data.results.length} mirrors unhealthy`,
+                body,
+                labels: [label],
+              });
+              core.notice(`Opened issue #${created.data.number}`);
+            } else {
+              const issue = existing.data[0];
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: issue.number,
+                body: `Still unhealthy as of \`${data.probed_at}\`.\n\n${body}`,
+              });
+              core.notice(`Commented on existing issue #${issue.number}`);
+            }
+
+      - name: Auto-close rolling issue (on success)
+        if: steps.probe.outputs.exit_code == '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'snapshot-probe-stale';
+            const { owner, repo } = context.repo;
+            const open = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: label, per_page: 5,
+            });
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: issue.number,
+                body: `All ${(JSON.parse(require('fs').readFileSync('probe.json', 'utf8'))).results.length} sources OK on the latest probe — closing.`,
+              });
+              await github.rest.issues.update({
+                owner, repo, issue_number: issue.number, state: 'closed',
+              });
+              core.notice(`Closed issue #${issue.number}`);
+            }
+
+      - name: Upload probe.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-result
+          path: probe.json
+          retention-days: 30
+
+      - name: Fail job when any source not OK
+        if: steps.probe.outputs.exit_code != '0'
+        run: |
+          echo "snapshot probe reported failure; see issue / artifact for details"
+          exit 1
