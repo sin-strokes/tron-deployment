@@ -12,33 +12,33 @@ import (
 type ProbeStatus string
 
 const (
-	ProbeOK          ProbeStatus = "ok"           // recent backup returns 200
-	ProbeStale       ProbeStatus = "stale"        // some backup returns 200, but it's older than staleAfter
-	ProbeUnreachable ProbeStatus = "unreachable"  // no backup returns 200 within the candidate window
-	ProbeNoBackups   ProbeStatus = "no_backups"   // ListBackups returned an empty slice
-	ProbeBadConfig   ProbeStatus = "bad_config"   // source has an unknown IndexStrategy / missing fields
+	ProbeOK          ProbeStatus = "ok"          // recent backup returns 200
+	ProbeStale       ProbeStatus = "stale"       // some backup returns 200, but it's older than staleAfter
+	ProbeUnreachable ProbeStatus = "unreachable" // no backup returns 200 within the candidate window
+	ProbeNoBackups   ProbeStatus = "no_backups"  // ListBackups returned an empty slice
+	ProbeBadConfig   ProbeStatus = "bad_config"  // source has an unknown IndexStrategy / missing fields
 )
 
 // ProbeResult captures everything we want to surface back to a human
 // reader or to a CI workflow. Source is embedded so a JSON consumer
 // can group by Domain / Network without a separate lookup.
 type ProbeResult struct {
-	Source        Source        `json:"source"`
-	Status        ProbeStatus   `json:"status"`
-	LatestBackup  string        `json:"latest_backup,omitempty"`  // e.g. "backup20260524"
-	LatestAgeDays int           `json:"latest_age_days,omitempty"`
-	LatencyMs     int64         `json:"latency_ms,omitempty"`
-	Err           string        `json:"err,omitempty"`
+	Source        Source      `json:"source"`
+	Status        ProbeStatus `json:"status"`
+	LatestBackup  string      `json:"latest_backup,omitempty"` // e.g. "backup20260524"
+	LatestAgeDays int         `json:"latest_age_days,omitempty"`
+	LatencyMs     int64       `json:"latency_ms,omitempty"`
+	Err           string      `json:"err,omitempty"`
 }
 
 // ProbeOptions tunes Probe behaviour. Zero values are safe defaults
 // (8s per-request HTTP timeout, 7d staleness threshold, 12 candidate
 // HEADs before giving up).
 type ProbeOptions struct {
-	HTTPTimeout    time.Duration // per-HEAD timeout. 0 → 8s
-	StaleAfter     time.Duration // age beyond which a working URL is "stale". 0 → 7 days
-	MaxCandidates  int           // how many backup names to HEAD-check. 0 → 12
-	HTTPClient     *http.Client  // optional override (tests inject a fake)
+	HTTPTimeout   time.Duration // per-HEAD timeout. 0 → 8s
+	StaleAfter    time.Duration // age beyond which a working URL is "stale". 0 → 7 days
+	MaxCandidates int           // how many backup names to HEAD-check. 0 → 12
+	HTTPClient    *http.Client  // optional override (tests inject a fake)
 }
 
 // Probe HEAD-checks the latest available tarball for a single Source.

@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// buildProbeMirror returns an httptest server that serves a
-// LiteFullNode tarball at exactly the backup dates passed in.
-// A HEAD to any other backup path returns 404. The Source returned
-// is wired to this mirror's URL with "date" IndexStrategy so Probe
-// walks the generated date list (newest-first).
-func buildProbeMirror(t *testing.T, serveDates ...string) (*httptest.Server, Source) {
+// buildProbeMirror returns a Source wired to a fresh httptest server
+// that serves a LiteFullNode tarball at exactly the backup dates
+// passed in. A HEAD to any other backup path returns 404. The server
+// itself is cleaned up via t.Cleanup — callers never need to touch
+// it, which is why only Source is returned (unparam-clean).
+func buildProbeMirror(t *testing.T, serveDates ...string) Source {
 	t.Helper()
 	mux := http.NewServeMux()
 	for _, d := range serveDates {
@@ -29,7 +29,7 @@ func buildProbeMirror(t *testing.T, serveDates ...string) (*httptest.Server, Sou
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	src := Source{
+	return Source{
 		Network:       NetworkNile,
 		DBKind:        DBKindLite,
 		DBEngine:      EngineLevelDB,
@@ -37,13 +37,12 @@ func buildProbeMirror(t *testing.T, serveDates ...string) (*httptest.Server, Sou
 		BaseURL:       srv.URL,
 		IndexStrategy: "date",
 	}
-	return srv, src
 }
 
 func TestProbe_OKWhenRecentBackupServes(t *testing.T) {
 	// Yesterday is always in the generated date list (i starts at 1).
 	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("20060102")
-	_, src := buildProbeMirror(t, yesterday)
+	src := buildProbeMirror(t, yesterday)
 
 	r := Probe(context.Background(), src, ProbeOptions{
 		HTTPTimeout: 2 * time.Second,
@@ -73,7 +72,7 @@ func TestProbe_StaleWhenOnlyOldBackupServes(t *testing.T) {
 		}
 	}
 	oldStr := old.Format("20060102")
-	_, src := buildProbeMirror(t, oldStr)
+	src := buildProbeMirror(t, oldStr)
 
 	r := Probe(context.Background(), src, ProbeOptions{
 		HTTPTimeout:   2 * time.Second,
@@ -90,7 +89,7 @@ func TestProbe_StaleWhenOnlyOldBackupServes(t *testing.T) {
 }
 
 func TestProbe_UnreachableWhenNothingServes(t *testing.T) {
-	_, src := buildProbeMirror(t /* no served dates */)
+	src := buildProbeMirror(t /* no served dates */)
 	r := Probe(context.Background(), src, ProbeOptions{
 		HTTPTimeout:   1 * time.Second,
 		MaxCandidates: 5,
@@ -135,9 +134,9 @@ func TestBackupAgeDays(t *testing.T) {
 
 func TestProbeAll_PreservesInputOrder(t *testing.T) {
 	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("20060102")
-	_, srcA := buildProbeMirror(t, yesterday)
+	srcA := buildProbeMirror(t, yesterday)
 	srcA.Domain = "alpha"
-	_, srcB := buildProbeMirror(t /* nothing */)
+	srcB := buildProbeMirror(t /* nothing */)
 	srcB.Domain = "bravo"
 	results := ProbeAll(context.Background(), []Source{srcA, srcB}, ProbeOptions{
 		HTTPTimeout:   1 * time.Second,
