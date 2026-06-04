@@ -68,6 +68,13 @@ func main() {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
+	case "generate", "broadcast", "statistic":
+		// known subcommand; validated here so the os.Exit below runs
+		// before any defer is registered (gocritic exitAfterDefer).
+	default:
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", os.Args[1])
+		fmt.Print(usage)
+		os.Exit(2)
 	}
 
 	sub := os.Args[1]
@@ -83,26 +90,28 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
+	// dispatch owns the cancelable context so its deferred cancel() runs
+	// before main's log.Fatalf below (gocritic exitAfterDefer).
+	if err := dispatch(sub, cfg); err != nil {
+		log.Fatalf("%s: %v", sub, err)
+	}
+}
+
+// dispatch runs the chosen subcommand under a signal-cancelable context.
+func dispatch(sub string, cfg *Config) error {
 	ctx, cancel := signal.NotifyContext(context.Background(),
 		syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-
-	var runErr error
 	switch sub {
 	case "generate":
-		runErr = runGenerate(ctx, cfg)
+		return runGenerate(ctx, cfg)
 	case "broadcast":
-		runErr = runBroadcast(ctx, cfg)
+		return runBroadcast(ctx, cfg)
 	case "statistic":
-		runErr = runStatistic(ctx, cfg)
-	default:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", sub)
-		fmt.Print(usage)
-		os.Exit(2)
+		return runStatistic(ctx, cfg)
 	}
-	if runErr != nil {
-		log.Fatalf("%s: %v", sub, runErr)
-	}
+	return nil
 }

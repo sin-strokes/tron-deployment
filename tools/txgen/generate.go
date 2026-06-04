@@ -226,4 +226,3 @@ func generateBatch(
 	}
 	return ok, fail
 }
-

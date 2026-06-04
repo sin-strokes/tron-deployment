@@ -152,12 +152,12 @@ func runBroadcast(ctx context.Context, cfg *Config) error {
 	}
 
 	report := formatReport(reportInput{
-		TpsLimit:        cfg.Broadcast.TpsLimit,
-		TotalGenerated:  total,
-		TotalBroadcastOK:  int(okCount.Load()),
+		TpsLimit:           cfg.Broadcast.TpsLimit,
+		TotalGenerated:     total,
+		TotalBroadcastOK:   int(okCount.Load()),
 		TotalBroadcastFail: int(failCount.Load()),
-		CostTime:        elapsed,
-		Stat:            stat,
+		CostTime:           elapsed,
+		Stat:               stat,
 	})
 	if err := os.WriteFile(cfg.Broadcast.ReportFile, []byte(report), 0o644); err != nil {
 		return fmt.Errorf("write report: %w", err)

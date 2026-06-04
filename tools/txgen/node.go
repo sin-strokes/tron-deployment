@@ -86,8 +86,6 @@ func (c *NodeClient) CreateTRC20Transfer(ctx context.Context, fromHex, contractH
 	copy(param[12:32], recipient20)
 	amtBytes := bigEndianI64(amount)
 	copy(param[64-len(amtBytes):], amtBytes)
-	selector := []byte{0xa9, 0x05, 0x9c, 0xbb}
-	data := append(selector, param...)
 
 	body := map[string]any{
 		"owner_address":     fromHex,
@@ -97,9 +95,8 @@ func (c *NodeClient) CreateTRC20Transfer(ctx context.Context, fromHex, contractH
 		"fee_limit":         feeLimit,
 		"call_value":        0,
 	}
-	_ = data // selector is auto-computed server-side from function_selector
-
-	// triggersmartcontract returns the tx wrapped under "transaction".
+	// triggersmartcontract returns the tx wrapped under "transaction";
+	// the selector is auto-computed server-side from function_selector.
 	respBytes, err := c.post(ctx, "/wallet/triggersmartcontract", body)
 	if err != nil {
 		return nil, err
@@ -123,8 +120,8 @@ func (c *NodeClient) CreateTRC20Transfer(ctx context.Context, fromHex, contractH
 
 // Block is the minimal block shape used for TPS statistics.
 type Block struct {
-	BlockID      string `json:"blockID"`
-	BlockHeader  struct {
+	BlockID     string `json:"blockID"`
+	BlockHeader struct {
 		RawData struct {
 			Number    int64 `json:"number"`
 			Timestamp int64 `json:"timestamp"`

@@ -10,6 +10,12 @@ import (
 	ecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
+// secp256k1Order is the group order N of the secp256k1 curve, used for
+// low-S signature normalization. Hardcoded to avoid the deprecated
+// secp256k1.S256() / elliptic.Curve path.
+var secp256k1Order, _ = new(big.Int).SetString(
+	"fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", 16)
+
 // SignTxID signs the 32-byte txID (== sha256(raw_data)) with privHex.
 // Returns the 65-byte ECDSA signature (r || s || v) in hex form, which
 // is exactly the shape java-tron expects in tx.signature[0].
@@ -53,8 +59,10 @@ func SignTxID(privHex, txIDHex string) (string, error) {
 		v -= 27
 	}
 
-	// Low-S normalization (BIP-62 / EIP-2 style).
-	curveN := secp256k1.S256().N
+	// Low-S normalization (BIP-62 / EIP-2 style). secp256k1Order is the
+	// group order N; we use the constant directly because secp256k1.S256()
+	// is deprecated (elliptic.Curve interface).
+	curveN := secp256k1Order
 	halfN := new(big.Int).Rsh(curveN, 1)
 	sBig := new(big.Int).SetBytes(s)
 	if sBig.Cmp(halfN) == 1 {
