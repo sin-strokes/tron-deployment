@@ -128,6 +128,46 @@ The sender must hold both the TRC10 balance and TRC20 balance — pre-fund via `
 
 ---
 
+## Post-quantum (PQ / 抗量子) transactions
+
+For nodes built with java-tron's post-quantum signature support, txgen can sign
+transactions with a PQ scheme instead of secp256k1. The transaction carries a
+`pq_auth_sig` envelope (`{scheme, public_key, signature}`) rather than the ECDSA
+`signature`; the signed digest is unchanged (`txID = sha256(raw_data)`), so the
+rest of the generate → broadcast → statistic flow is identical.
+
+Enable it with a `generate.pq` block:
+
+```json
+{
+  "generate": {
+    "...": "...",
+    "txType": { "transfer": 100, "transferTrc10": 0, "transferTrc20": 0 },
+    "pq": {
+      "enabled": true,
+      "scheme": "ML_DSA_44",
+      "seed": "<64-hex-char (32-byte) seed>"
+    }
+  }
+}
+```
+
+- **Scheme.** Only `ML_DSA_44` (FIPS 204 ML-DSA-44 / CRYSTALS-Dilithium-2) is
+  supported. It interoperates with the node's BouncyCastle verifier. Falcon-512
+  (`FN_DSA_512`) is **not** supported: java-tron uses a BouncyCastle/EIP-8052
+  specific wire encoding that no Go library reproduces, so a Go-signed Falcon
+  signature would be rejected on-chain.
+- **Sender.** In PQ mode the sender address is derived from `pq.seed`
+  (`0x41 ‖ Keccak-256(public_key)[12..32]`), **not** from `privateKey` — which is
+  not required. `txgen generate` logs the derived `T...` / hex address at startup.
+- **Account provisioning (required).** The node only accepts a PQ signature when
+  the sender account's permission already contains this PQ public key with enough
+  weight. Install it out-of-band (e.g. via `AccountPermissionUpdate`) before
+  generating; txgen does not perform the permission update. The same `seed`
+  always derives the same keypair/address, so provision once and reuse.
+
+---
+
 ## Prerequisites
 
 1. **Private chain node is reachable** at the `node` URL (default `http://127.0.0.1:8090`).
@@ -239,7 +279,7 @@ txgen reads a single JSON file (default `./txgen.json`, override with `-c` / `--
 | `generate` | `totalTxCount` | — (required) | Total signed txs to build. |
 | `generate` | `receiverAddressCount` | `1000` | Fresh receiver addresses to generate in-memory and dump to `<outputDir>/receivers.csv`. |
 | `generate` | `concurrency` | `8` | Worker goroutines (each issues node round-trips serially). Task size (rows per CSV file) is auto-derived so each worker gets ~4 tasks, clamped to [1000, 100000]. |
-| `generate` | `privateKey` | — (required) | Sender secp256k1 key, hex (64 chars). |
+| `generate` | `privateKey` | — (required unless `pq.enabled`) | Sender secp256k1 key, hex (64 chars). Not used in PQ mode. |
 | `generate` | `outputDir` | `txgen-output` | Directory for `receivers.csv` and `generate-tx-NNNN.csv` files. |
 | `generate` | `txType.transfer` | — | TRX share, in percent. |
 | `generate` | `txType.transferTrc10` | — | TRC10 share, in percent. |
@@ -248,6 +288,9 @@ txgen reads a single JSON file (default `./txgen.json`, override with `-c` / `--
 | `generate` | `trc20Address` | — | TRC20 contract address (base58 or hex). Required iff `transferTrc20 > 0`. |
 | `generate` | `transferAmount` | `1` | Amount per tx in the smallest unit (SUN for TRX, raw token units otherwise). |
 | `generate` | `trc20FeeLimit` | `100000000` | Fee limit (SUN) on TRC20 calls. 100 TRX is plenty for a vanilla `transfer`. |
+| `generate` | `pq.enabled` | `false` | Sign with a post-quantum scheme (`pq_auth_sig`) instead of secp256k1. See [Post-quantum transactions](#post-quantum-pq--抗量子-transactions). |
+| `generate` | `pq.scheme` | `ML_DSA_44` | PQ scheme. Only `ML_DSA_44` is supported. |
+| `generate` | `pq.seed` | — (required iff `pq.enabled`) | 32-byte hex (64 chars) seed; derives the PQ keypair and sender address. |
 | `broadcast` | `inputDir` | = `generate.outputDir` | Where to find `generate-tx-*.csv`. |
 | `broadcast` | `tpsLimit` | `1000` | Token-bucket cap, txs/second. |
 | `broadcast` | `saveTxId` | `false` | Append accepted txIDs to `txIdFile`. |

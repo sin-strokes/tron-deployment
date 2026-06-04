@@ -252,3 +252,28 @@ func AttachSignature(unsigned []byte, sigHex string) ([]byte, error) {
 	obj["signature"] = sigJSON
 	return json.Marshal(obj)
 }
+
+// AttachPQSignature attaches a post-quantum pq_auth_sig entry to the
+// unsigned tx JSON, returning a JSON object suitable for
+// /wallet/broadcasttransaction.
+//
+// scheme is the PQScheme enum name (e.g. "ML_DSA_44"); pubKeyHex and sigHex
+// are lowercase hex. java-tron accepts ECDSA `signature` and `pq_auth_sig`
+// side by side, but for a PQ-only sender we attach only pq_auth_sig.
+func AttachPQSignature(unsigned []byte, scheme, pubKeyHex, sigHex string) ([]byte, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(unsigned, &obj); err != nil {
+		return nil, err
+	}
+	entry := map[string]string{
+		"scheme":     scheme,
+		"public_key": pubKeyHex,
+		"signature":  sigHex,
+	}
+	arr, err := json.Marshal([]map[string]string{entry})
+	if err != nil {
+		return nil, err
+	}
+	obj["pq_auth_sig"] = arr
+	return json.Marshal(obj)
+}

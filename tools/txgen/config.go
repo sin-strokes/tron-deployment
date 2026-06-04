@@ -32,6 +32,16 @@ type Config struct {
 		TRC20Address   string `json:"trc20Address"`
 		TransferAmount int64  `json:"transferAmount"`
 		TRC20FeeLimit  int64  `json:"trc20FeeLimit"`
+
+		// PQ: when enabled, transactions are signed with a post-quantum
+		// scheme and carry a pq_auth_sig instead of the ECDSA signature.
+		// The sender is derived from the PQ seed (not privateKey); its
+		// account permission must already register this PQ public key.
+		PQ struct {
+			Enabled bool   `json:"enabled"`
+			Scheme  string `json:"scheme"` // only "ML_DSA_44" is supported
+			Seed    string `json:"seed"`   // 32-byte hex (64 hex chars)
+		} `json:"pq"`
 	} `json:"generate"`
 
 	// Broadcast: read CSV, fire to node at tpsLimit, write txIDs.
@@ -88,6 +98,9 @@ func (c *Config) applyDefaults() {
 	if c.Generate.TRC20FeeLimit == 0 {
 		c.Generate.TRC20FeeLimit = 100_000_000 // 100 TRX
 	}
+	if c.Generate.PQ.Enabled && c.Generate.PQ.Scheme == "" {
+		c.Generate.PQ.Scheme = SchemeMLDSA44
+	}
 	if c.Broadcast.InputDir == "" {
 		c.Broadcast.InputDir = c.Generate.OutputDir
 	}
@@ -120,11 +133,22 @@ func (c *Config) validate() error {
 	if sum != 100 {
 		return fmt.Errorf("generate.txType weights must sum to 100, got %d", sum)
 	}
-	if c.Generate.PrivateKey == "" {
-		return errors.New("generate.privateKey is required")
-	}
-	if len(c.Generate.PrivateKey) != PrivateKeyHexLen {
-		return fmt.Errorf("generate.privateKey must be %d hex chars", PrivateKeyHexLen)
+	if c.Generate.PQ.Enabled {
+		// PQ mode signs with the post-quantum seed; the ECDSA privateKey
+		// is not used and the sender is derived from the seed instead.
+		if c.Generate.PQ.Scheme != SchemeMLDSA44 {
+			return fmt.Errorf("generate.pq.scheme %q unsupported (only %s)", c.Generate.PQ.Scheme, SchemeMLDSA44)
+		}
+		if len(c.Generate.PQ.Seed) != pqSeedHexLen {
+			return fmt.Errorf("generate.pq.seed must be %d hex chars (32 bytes)", pqSeedHexLen)
+		}
+	} else {
+		if c.Generate.PrivateKey == "" {
+			return errors.New("generate.privateKey is required")
+		}
+		if len(c.Generate.PrivateKey) != PrivateKeyHexLen {
+			return fmt.Errorf("generate.privateKey must be %d hex chars", PrivateKeyHexLen)
+		}
 	}
 	if tt.TransferTRC10 > 0 && c.Generate.TRC10ID == "" {
 		return errors.New("generate.trc10Id is required when transferTrc10 > 0")

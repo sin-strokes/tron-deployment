@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math/rand"
@@ -52,9 +53,9 @@ func runGenerate(ctx context.Context, cfg *Config) error {
 	log.Printf("generate: built %d receiver addresses → %s",
 		len(addrs), filepath.Base(sidecar))
 
-	senderHex, _, err := AddressFromPrivateKey(cfg.Generate.PrivateKey)
+	senderHex, signTx, err := buildSigner(cfg)
 	if err != nil {
-		return fmt.Errorf("derive sender address: %w", err)
+		return err
 	}
 	log.Printf("generate: sender = %s", senderHex)
 
@@ -100,7 +101,7 @@ func runGenerate(ctx context.Context, cfg *Config) error {
 				}
 				outFile := filepath.Join(cfg.Generate.OutputDir,
 					fmt.Sprintf("generate-tx-%04d.csv", taskID))
-				ok, fail := generateBatch(ctx, node, cfg, senderHex, addrs, rng, batch, outFile)
+				ok, fail := generateBatch(ctx, node, cfg, senderHex, signTx, addrs, rng, batch, outFile)
 				okCount.Add(int64(ok))
 				failCount.Add(int64(fail))
 				log.Printf("generate: task %d done (%d ok, %d fail) → %s",
@@ -114,6 +115,49 @@ func runGenerate(ctx context.Context, cfg *Config) error {
 	log.Printf("generate: done in %s — ok=%d fail=%d",
 		elapsed.Round(time.Second), okCount.Load(), failCount.Load())
 	return nil
+}
+
+// signFunc turns an unsigned tx (its raw JSON + txID) into fully signed
+// broadcast JSON. The ECDSA and PQ paths differ only in how the txID is
+// signed and which field the result is attached to.
+type signFunc func(unsigned *UnsignedTx) ([]byte, error)
+
+// buildSigner picks the signing path from config and returns the sender
+// address (the owner for every generated tx) plus the matching signFunc.
+//
+// In PQ mode the sender is derived from the post-quantum seed; otherwise it
+// is derived from the ECDSA private key, as before.
+func buildSigner(cfg *Config) (string, signFunc, error) {
+	if cfg.Generate.PQ.Enabled {
+		signer, err := NewPQSigner(cfg.Generate.PQ.Scheme, cfg.Generate.PQ.Seed)
+		if err != nil {
+			return "", nil, fmt.Errorf("init pq signer: %w", err)
+		}
+		log.Printf("generate: pq scheme = %s, sender = %s (%s)",
+			signer.SchemeName(), signer.Base58Address(), signer.HexAddress())
+		fn := func(u *UnsignedTx) ([]byte, error) {
+			sig, err := signer.Sign(u.TxID)
+			if err != nil {
+				return nil, err
+			}
+			return AttachPQSignature(u.Raw, signer.SchemeName(),
+				signer.PublicKeyHex(), hex.EncodeToString(sig))
+		}
+		return signer.HexAddress(), fn, nil
+	}
+
+	senderHex, _, err := AddressFromPrivateKey(cfg.Generate.PrivateKey)
+	if err != nil {
+		return "", nil, fmt.Errorf("derive sender address: %w", err)
+	}
+	fn := func(u *UnsignedTx) ([]byte, error) {
+		sigHex, err := SignTxID(cfg.Generate.PrivateKey, u.TxID)
+		if err != nil {
+			return nil, err
+		}
+		return AttachSignature(u.Raw, sigHex)
+	}
+	return senderHex, fn, nil
 }
 
 // buildReceivers produces n fresh secp256k1 keypairs to use as transfer
@@ -161,7 +205,7 @@ func deriveTaskSize(total, concurrency int) int {
 // commonly insufficient balance once the sender's TRX runs out.
 func generateBatch(
 	ctx context.Context, node *NodeClient, cfg *Config,
-	senderHex string, addrs []AddressRow, rng *rand.Rand,
+	senderHex string, signTx signFunc, addrs []AddressRow, rng *rand.Rand,
 	n int, outFile string,
 ) (int, int) {
 	f, err := os.Create(outFile)
@@ -208,12 +252,7 @@ func generateBatch(
 			continue
 		}
 
-		sigHex, err := SignTxID(cfg.Generate.PrivateKey, unsigned.TxID)
-		if err != nil {
-			fail++
-			continue
-		}
-		signed, err := AttachSignature(unsigned.Raw, sigHex)
+		signed, err := signTx(unsigned)
 		if err != nil {
 			fail++
 			continue
