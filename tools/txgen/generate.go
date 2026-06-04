@@ -53,11 +53,10 @@ func runGenerate(ctx context.Context, cfg *Config) error {
 	log.Printf("generate: built %d receiver addresses → %s",
 		len(addrs), filepath.Base(sidecar))
 
-	senderHex, signTx, err := buildSigner(cfg)
+	signers, err := buildSigners(cfg)
 	if err != nil {
 		return err
 	}
-	log.Printf("generate: sender = %s", senderHex)
 
 	node := NewNodeClient(cfg.Node, 10*time.Second)
 
@@ -101,7 +100,7 @@ func runGenerate(ctx context.Context, cfg *Config) error {
 				}
 				outFile := filepath.Join(cfg.Generate.OutputDir,
 					fmt.Sprintf("generate-tx-%04d.csv", taskID))
-				ok, fail := generateBatch(ctx, node, cfg, senderHex, signTx, addrs, rng, batch, outFile)
+				ok, fail := generateBatch(ctx, node, cfg, signers, addrs, rng, batch, outFile)
 				okCount.Add(int64(ok))
 				failCount.Add(int64(fail))
 				log.Printf("generate: task %d done (%d ok, %d fail) → %s",
@@ -122,42 +121,79 @@ func runGenerate(ctx context.Context, cfg *Config) error {
 // signed and which field the result is attached to.
 type signFunc func(unsigned *UnsignedTx) ([]byte, error)
 
-// buildSigner picks the signing path from config and returns the sender
-// address (the owner for every generated tx) plus the matching signFunc.
-//
-// In PQ mode the sender is derived from the post-quantum seed; otherwise it
-// is derived from the ECDSA private key, as before.
-func buildSigner(cfg *Config) (string, signFunc, error) {
-	if cfg.Generate.PQ.Enabled {
-		signer, err := NewPQSigner(cfg.Generate.PQ.Scheme, cfg.Generate.PQ.Seed)
+// signer pairs a sender address with the function that signs txs sent from
+// it. A tx's owner address must match the key that signs it, so the PQ and
+// ECDSA paths each carry their own sender.
+type signer struct {
+	senderHex string
+	sign      signFunc
+}
+
+// signerSet selects a signer per transaction. When pqRatio is in (0,100)
+// generation mixes PQ-signed txs (from the PQ-derived sender) with
+// ECDSA-signed txs (from the ECDSA sender); pqRatio == 100 means all PQ and
+// pqRatio == 0 means all ECDSA.
+type signerSet struct {
+	ecdsa   *signer // nil when pqRatio == 100
+	pq      *signer // nil when PQ is disabled
+	pqRatio int     // percent of txs PQ-signed, [0,100]
+}
+
+// pick returns the signer for one tx given an independent roll in [0,100).
+func (s *signerSet) pick(roll int) *signer {
+	if s.pq != nil && roll < s.pqRatio {
+		return s.pq
+	}
+	return s.ecdsa
+}
+
+// buildSigners wires up the signer(s) from config. The ECDSA signer is built
+// whenever any tx is ECDSA-signed (PQ disabled, or PQ ratio < 100); the PQ
+// signer is built when PQ is enabled.
+func buildSigners(cfg *Config) (*signerSet, error) {
+	pqcfg := cfg.Generate.PQ
+	set := &signerSet{}
+
+	if pqcfg.Enabled {
+		ps, err := NewPQSigner(pqcfg.Scheme, pqcfg.Seed)
 		if err != nil {
-			return "", nil, fmt.Errorf("init pq signer: %w", err)
+			return nil, fmt.Errorf("init pq signer: %w", err)
 		}
-		log.Printf("generate: pq scheme = %s, sender = %s (%s)",
-			signer.SchemeName(), signer.Base58Address(), signer.HexAddress())
-		fn := func(u *UnsignedTx) ([]byte, error) {
-			sig, err := signer.Sign(u.TxID)
-			if err != nil {
-				return nil, err
-			}
-			return AttachPQSignature(u.Raw, signer.SchemeName(),
-				signer.PublicKeyHex(), hex.EncodeToString(sig))
+		set.pqRatio = pqcfg.Ratio
+		set.pq = &signer{
+			senderHex: ps.HexAddress(),
+			sign: func(u *UnsignedTx) ([]byte, error) {
+				sig, err := ps.Sign(u.TxID)
+				if err != nil {
+					return nil, err
+				}
+				return AttachPQSignature(u.Raw, ps.SchemeName(),
+					ps.PublicKeyHex(), hex.EncodeToString(sig))
+			},
 		}
-		return signer.HexAddress(), fn, nil
+		log.Printf("generate: pq scheme = %s, ratio = %d%%, pq sender = %s (%s)",
+			ps.SchemeName(), set.pqRatio, ps.Base58Address(), ps.HexAddress())
 	}
 
-	senderHex, _, err := AddressFromPrivateKey(cfg.Generate.PrivateKey)
-	if err != nil {
-		return "", nil, fmt.Errorf("derive sender address: %w", err)
-	}
-	fn := func(u *UnsignedTx) ([]byte, error) {
-		sigHex, err := SignTxID(cfg.Generate.PrivateKey, u.TxID)
+	if !pqcfg.Enabled || set.pqRatio < 100 {
+		senderHex, b58, err := AddressFromPrivateKey(cfg.Generate.PrivateKey)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("derive sender address: %w", err)
 		}
-		return AttachSignature(u.Raw, sigHex)
+		set.ecdsa = &signer{
+			senderHex: senderHex,
+			sign: func(u *UnsignedTx) ([]byte, error) {
+				sigHex, err := SignTxID(cfg.Generate.PrivateKey, u.TxID)
+				if err != nil {
+					return nil, err
+				}
+				return AttachSignature(u.Raw, sigHex)
+			},
+		}
+		log.Printf("generate: ecdsa sender = %s (%s)", b58, senderHex)
 	}
-	return senderHex, fn, nil
+
+	return set, nil
 }
 
 // buildReceivers produces n fresh secp256k1 keypairs to use as transfer
@@ -205,7 +241,7 @@ func deriveTaskSize(total, concurrency int) int {
 // commonly insufficient balance once the sender's TRX runs out.
 func generateBatch(
 	ctx context.Context, node *NodeClient, cfg *Config,
-	senderHex string, signTx signFunc, addrs []AddressRow, rng *rand.Rand,
+	signers *signerSet, addrs []AddressRow, rng *rand.Rand,
 	n int, outFile string,
 ) (int, int) {
 	f, err := os.Create(outFile)
@@ -230,29 +266,32 @@ func generateBatch(
 			return ok, fail
 		}
 		receiver := addrs[rng.Intn(len(addrs))].HexAddress
+		// Independent rolls: one picks the signer (ECDSA vs PQ), one picks
+		// the contract type. The owner of each tx is its signer's sender.
+		sgn := signers.pick(rng.Intn(100))
 		roll := rng.Intn(100)
 
 		var unsigned *UnsignedTx
 		var buildErr error
 		switch {
 		case roll < thrTRX:
-			unsigned, buildErr = node.CreateTRXTransfer(ctx, senderHex, receiver, cfg.Generate.TransferAmount)
+			unsigned, buildErr = node.CreateTRXTransfer(ctx, sgn.senderHex, receiver, cfg.Generate.TransferAmount)
 		case roll < thrTRC10:
-			unsigned, buildErr = node.CreateTRC10Transfer(ctx, senderHex, receiver, cfg.Generate.TRC10ID, cfg.Generate.TransferAmount)
+			unsigned, buildErr = node.CreateTRC10Transfer(ctx, sgn.senderHex, receiver, cfg.Generate.TRC10ID, cfg.Generate.TransferAmount)
 		default:
 			c20, err := NormalizeAddress(cfg.Generate.TRC20Address)
 			if err != nil {
 				fail++
 				continue
 			}
-			unsigned, buildErr = node.CreateTRC20Transfer(ctx, senderHex, c20, receiver, cfg.Generate.TransferAmount, cfg.Generate.TRC20FeeLimit)
+			unsigned, buildErr = node.CreateTRC20Transfer(ctx, sgn.senderHex, c20, receiver, cfg.Generate.TransferAmount, cfg.Generate.TRC20FeeLimit)
 		}
 		if buildErr != nil {
 			fail++
 			continue
 		}
 
-		signed, err := signTx(unsigned)
+		signed, err := sgn.sign(unsigned)
 		if err != nil {
 			fail++
 			continue

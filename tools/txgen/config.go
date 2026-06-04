@@ -33,14 +33,16 @@ type Config struct {
 		TransferAmount int64  `json:"transferAmount"`
 		TRC20FeeLimit  int64  `json:"trc20FeeLimit"`
 
-		// PQ: when enabled, transactions are signed with a post-quantum
-		// scheme and carry a pq_auth_sig instead of the ECDSA signature.
-		// The sender is derived from the PQ seed (not privateKey); its
-		// account permission must already register this PQ public key.
+		// PQ: when enabled, a `ratio` percent of transactions are signed
+		// with a post-quantum scheme and carry a pq_auth_sig instead of the
+		// ECDSA signature; the remainder are ECDSA-signed. The PQ sender is
+		// derived from the PQ seed (its account permission must already
+		// register this PQ public key); the ECDSA sender from privateKey.
 		PQ struct {
 			Enabled bool   `json:"enabled"`
 			Scheme  string `json:"scheme"` // only "ML_DSA_44" is supported
 			Seed    string `json:"seed"`   // 32-byte hex (64 hex chars)
+			Ratio   int    `json:"ratio"`  // percent of txs PQ-signed, 1-100 (default 100)
 		} `json:"pq"`
 	} `json:"generate"`
 
@@ -98,8 +100,15 @@ func (c *Config) applyDefaults() {
 	if c.Generate.TRC20FeeLimit == 0 {
 		c.Generate.TRC20FeeLimit = 100_000_000 // 100 TRX
 	}
-	if c.Generate.PQ.Enabled && c.Generate.PQ.Scheme == "" {
-		c.Generate.PQ.Scheme = SchemeMLDSA44
+	if c.Generate.PQ.Enabled {
+		if c.Generate.PQ.Scheme == "" {
+			c.Generate.PQ.Scheme = SchemeMLDSA44
+		}
+		// An omitted ratio defaults to 100% PQ; to disable PQ entirely set
+		// pq.enabled = false rather than ratio = 0.
+		if c.Generate.PQ.Ratio == 0 {
+			c.Generate.PQ.Ratio = 100
+		}
 	}
 	if c.Broadcast.InputDir == "" {
 		c.Broadcast.InputDir = c.Generate.OutputDir
@@ -134,15 +143,19 @@ func (c *Config) validate() error {
 		return fmt.Errorf("generate.txType weights must sum to 100, got %d", sum)
 	}
 	if c.Generate.PQ.Enabled {
-		// PQ mode signs with the post-quantum seed; the ECDSA privateKey
-		// is not used and the sender is derived from the seed instead.
 		if c.Generate.PQ.Scheme != SchemeMLDSA44 {
 			return fmt.Errorf("generate.pq.scheme %q unsupported (only %s)", c.Generate.PQ.Scheme, SchemeMLDSA44)
 		}
 		if len(c.Generate.PQ.Seed) != pqSeedHexLen {
 			return fmt.Errorf("generate.pq.seed must be %d hex chars (32 bytes)", pqSeedHexLen)
 		}
-	} else {
+		if c.Generate.PQ.Ratio < 1 || c.Generate.PQ.Ratio > 100 {
+			return fmt.Errorf("generate.pq.ratio must be 1-100, got %d", c.Generate.PQ.Ratio)
+		}
+	}
+	// The ECDSA privateKey is needed whenever some txs are ECDSA-signed:
+	// PQ off entirely, or PQ on but signing less than 100% of txs.
+	if !c.Generate.PQ.Enabled || c.Generate.PQ.Ratio < 100 {
 		if c.Generate.PrivateKey == "" {
 			return errors.New("generate.privateKey is required")
 		}
