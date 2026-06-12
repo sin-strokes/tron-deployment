@@ -5,6 +5,8 @@ go 1.25.0
 toolchain go1.25.11
 
 require (
+	github.com/cloudflare/circl v1.6.3
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/go-playground/validator/v10 v10.30.2
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
